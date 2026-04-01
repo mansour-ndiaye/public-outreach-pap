@@ -1,9 +1,9 @@
 import { getRequestConfig } from 'next-intl/server'
 import { notFound } from 'next/navigation'
+import { locales, type Locale } from './i18n.config'
 
-export const locales = ['fr', 'en'] as const
-export type Locale = (typeof locales)[number]
-export const defaultLocale: Locale = 'fr'
+export { locales, defaultLocale } from './i18n.config'
+export type { Locale } from './i18n.config'
 
 export default getRequestConfig(async ({ locale }) => {
   if (!locales.includes(locale as Locale)) notFound()
