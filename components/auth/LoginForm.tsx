@@ -52,7 +52,7 @@ export function LoginForm() {
         .from('users')
         .select('role')
         .eq('id', authData.user.id)
-        .single()
+        .single() as { data: { role: string } | null; error: unknown }
 
       if (profileError || !profile) {
         setError(t('error_generic'))
