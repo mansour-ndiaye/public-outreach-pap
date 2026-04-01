@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Mapbox GL ─── */
+@import 'mapbox-gl/dist/mapbox-gl.css';
+
+/* ─── Google Fonts ─── */
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+
+@layer base {
+  :root {
+    --font-display: 'Sora', system-ui, sans-serif;
+    --font-body:    'Inter', system-ui, sans-serif;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-white text-slate-900 transition-colors duration-300;
+  }
+
+  .dark body {
+    @apply bg-[#0f1035] text-white;
+  }
+
+  /* Focus ring reset — handled per-component */
+  *:focus {
+    outline: none;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .font-body {
+    font-family: var(--font-body);
+  }
+}
+
+/* ─── Territory hover tooltip (Mapbox Popup override) ───────────────────────── */
+.territory-tooltip .mapboxgl-popup-content {
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 8px;
+  padding: 5px 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  color: #1e2170;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.dark .territory-tooltip .mapboxgl-popup-content {
+  background: rgba(14, 17, 53, 0.97);
+  border-color: rgba(255, 255, 255, 0.10);
+  color: #ffffff;
+}
+.territory-tooltip .mapboxgl-popup-tip {
+  border-top-color: rgba(255, 255, 255, 0.96) !important;
+}
+.dark .territory-tooltip .mapboxgl-popup-tip {
+  border-top-color: rgba(14, 17, 53, 0.97) !important;
+}
+
+/* ─── Bottom-sheet slide-up animation (used by territory modals on mobile) ─── */
+@keyframes sheetUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+.animate-sheet-up {
+  animation: sheetUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}

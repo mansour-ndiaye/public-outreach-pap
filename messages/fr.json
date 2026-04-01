@@ -1,0 +1,151 @@
+{
+  "auth": {
+    "login": "Connexion",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "forgot_password": "Mot de passe oublié?",
+    "sign_in": "Se connecter",
+    "signing_in": "Connexion en cours...",
+    "welcome_back": "Bon retour",
+    "subtitle": "Connectez-vous à votre espace territoire",
+    "email_placeholder": "vous@exemple.com",
+    "password_placeholder": "••••••••",
+    "error_invalid": "E-mail ou mot de passe invalide.",
+    "error_generic": "Une erreur est survenue. Veuillez réessayer."
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "territories": "Terrains",
+    "team": "Équipe",
+    "reports": "Rapports",
+    "settings": "Paramètres",
+    "logout": "Déconnexion"
+  },
+  "common": {
+    "loading": "Chargement...",
+    "save": "Sauvegarder",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "confirm": "Confirmer",
+    "back": "Retour",
+    "search": "Rechercher",
+    "filter": "Filtrer",
+    "active": "Actif",
+    "inactive": "Inactif",
+    "pending": "En attente"
+  },
+  "roles": {
+    "admin": "Administrateur",
+    "territory_manager": "Gestionnaire de terrain",
+    "supervisor": "Superviseur",
+    "field_team": "Équipe terrain"
+  },
+  "theme": {
+    "light": "Mode clair",
+    "dark": "Mode sombre",
+    "toggle": "Changer le thème"
+  },
+  "dashboard": {
+    "welcome": "Bonjour, {name}",
+    "logout": "Déconnexion",
+    "coming_soon": "Tableau de bord en construction",
+    "coming_soon_desc": "La prochaine phase de développement apportera les fonctionnalités complètes : carte des terrains, saisie des PAC, rapports PPH et plus."
+  },
+  "admin": {
+    "nav": {
+      "dashboard": "Tableau de bord",
+      "users": "Utilisateurs",
+      "territories": "Terrains",
+      "teams": "Équipes",
+      "settings": "Paramètres",
+      "logout": "Déconnexion"
+    },
+    "dashboard": {
+      "title": "Tableau de bord",
+      "subtitle": "Vue d'ensemble de votre organisation",
+      "stats": {
+        "users": "Utilisateurs",
+        "territories": "Terrains",
+        "teams": "Équipes",
+        "assignments_today": "Sorties aujourd'hui"
+      }
+    },
+    "users": {
+      "title": "Utilisateurs",
+      "subtitle": "Gérez les comptes et les rôles",
+      "create_btn": "Nouvel utilisateur",
+      "search_placeholder": "Rechercher par nom ou e-mail...",
+      "col_name": "Nom",
+      "col_role": "Rôle",
+      "col_created": "Créé le",
+      "col_actions": "Actions",
+      "empty": "Aucun utilisateur trouvé.",
+      "modal_create_title": "Créer un utilisateur",
+      "modal_create_name": "Nom complet",
+      "modal_create_name_placeholder": "Jean Dupont",
+      "modal_create_email": "Adresse e-mail",
+      "modal_create_password": "Mot de passe",
+      "modal_create_role": "Rôle",
+      "modal_create_submit": "Créer l'utilisateur",
+      "modal_edit_title": "Modifier le rôle",
+      "modal_edit_role": "Nouveau rôle",
+      "modal_edit_save": "Sauvegarder",
+      "modal_delete_title": "Supprimer l'utilisateur",
+      "modal_delete_desc": "Cette action est irréversible. L'utilisateur perdra immédiatement son accès à l'application.",
+      "modal_delete_confirm": "Supprimer définitivement",
+      "cancel": "Annuler",
+      "error_create": "Impossible de créer l'utilisateur.",
+      "error_update": "Impossible de modifier le rôle.",
+      "error_delete": "Impossible de supprimer l'utilisateur."
+    },
+    "territories": {
+      "title": "Terrains",
+      "territories_count": "terrain(s)",
+      "empty": "Aucun terrain pour le moment.",
+      "add_btn": "Ajouter un terrain",
+      "show_list": "Voir la liste",
+      "legend": "Légende",
+      "status_active": "Actif",
+      "status_pending": "En attente",
+      "status_inactive": "Inactif",
+      "detail_sector": "Secteur",
+      "detail_status": "Statut",
+      "detail_team": "Équipe",
+      "detail_delete": "Supprimer",
+      "no_polygon": "Pas de zone dessinée",
+      "map_loading": "Chargement de la carte...",
+      "draw_hint": "Cliquez sur la carte pour placer des points",
+      "draw_hint_mobile": "Tapez sur la carte pour placer des points",
+      "draw_hint_desktop": "Double-cliquez sur le dernier point pour terminer",
+      "draw_click_mode": "Placer des points",
+      "draw_freehand_mode": "Dessin libre",
+      "draw_finish": "Terminer",
+      "draw_undo_point": "Annuler le dernier point",
+      "draw_cancel": "Annuler le tracé",
+      "draw_hint_freehand": "Maintenez et glissez pour dessiner la zone",
+      "save_title": "Nouveau terrain",
+      "save_name": "Nom du terrain",
+      "save_name_placeholder": "ex. Plateau-Mont-Royal Nord",
+      "save_sector": "Secteur / Quartier",
+      "save_sector_placeholder": "ex. Plateau-Mont-Royal",
+      "save_status": "Statut",
+      "save_team": "Équipe assignée",
+      "save_team_none": "Aucune équipe",
+      "save_submit": "Enregistrer",
+      "save_cancel": "Annuler",
+      "save_saving": "Enregistrement...",
+      "save_error": "Impossible d'enregistrer le terrain.",
+      "delete_title": "Supprimer ce terrain",
+      "delete_desc": "Cette action est irréversible. Le terrain sera supprimé définitivement.",
+      "delete_confirm": "Supprimer définitivement",
+      "delete_cancel": "Annuler",
+      "delete_error": "Impossible de supprimer le terrain.",
+      "delete_deleting": "Suppression..."
+    },
+    "placeholder": {
+      "coming_soon": "En construction",
+      "coming_soon_desc": "Cette section sera disponible prochainement."
+    }
+  }
+}
