@@ -20,7 +20,7 @@ export async function getCurrentUser(): Promise<UserRow | null> {
     .from('users')
     .select('*')
     .eq('id', user.id)
-    .single()
+    .single() as { data: UserRow | null; error: unknown }
 
   return profile
 }

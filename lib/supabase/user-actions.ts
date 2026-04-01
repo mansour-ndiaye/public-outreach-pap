@@ -15,7 +15,7 @@ async function requireAdmin() {
     .from('users')
     .select('role')
     .eq('id', user.id)
-    .single()
+    .single() as { data: { role: string } | null; error: unknown }
 
   if (profile?.role !== 'admin') throw new Error('Unauthorized')
   return user
