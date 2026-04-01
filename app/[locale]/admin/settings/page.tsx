@@ -1,5 +1,7 @@
 import { getTranslations } from 'next-intl/server'
 
+export const dynamic = 'force-dynamic'
+
 export default async function AdminSettingsPage() {
   const tNav = await getTranslations('admin.nav')
   const t = await getTranslations('admin.placeholder')

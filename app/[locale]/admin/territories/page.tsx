@@ -1,8 +1,10 @@
-import dynamic from 'next/dynamic'
+import nextDynamic from 'next/dynamic'
 import { fetchTerritories, fetchTeams } from '@/lib/supabase/territory-actions'
 import type { TerritoryRow, TeamRow } from '@/types'
 
-const TerritoriesMap = dynamic(
+export const dynamic = 'force-dynamic'
+
+const TerritoriesMap = nextDynamic(
   () => import('@/components/admin/territories/TerritoriesMap').then(m => m.TerritoriesMap),
   {
     ssr: false,

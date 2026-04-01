@@ -6,6 +6,8 @@ import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { locales, type Locale } from '@/i18n'
 import '../globals.css'
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'Public Outreach — Territory Management',
   description: 'PAP Territory Management Application for Public Outreach field teams.',

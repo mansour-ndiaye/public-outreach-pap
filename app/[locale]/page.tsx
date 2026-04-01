@@ -3,6 +3,8 @@ import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { LocaleToggle } from '@/components/ui/LocaleToggle'
 import Image from 'next/image'
 
+export const dynamic = 'force-dynamic'
+
 export default function LoginPage() {
   return (
     <main className="relative min-h-screen w-full flex flex-col overflow-hidden bg-white dark:bg-[#0f1035]">

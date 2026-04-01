@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation'
 import { getCurrentUser } from '@/lib/supabase/actions'
 import { AdminShell } from '@/components/admin/AdminShell'
 
+export const dynamic = 'force-dynamic'
+
 interface Props {
   children: React.ReactNode
   params: { locale: string }

@@ -2,6 +2,8 @@ import { getTranslations } from 'next-intl/server'
 import { createClient } from '@/lib/supabase/server'
 import { StatsCard } from '@/components/admin/StatsCard'
 
+export const dynamic = 'force-dynamic'
+
 interface Props {
   params: { locale: string }
 }

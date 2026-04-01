@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 import { UsersTable } from '@/components/admin/users/UsersTable'
 import type { UserRow } from '@/types'
 
+export const dynamic = 'force-dynamic'
+
 interface Props {
   params: { locale: string }
 }
