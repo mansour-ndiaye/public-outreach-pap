@@ -23,7 +23,7 @@ export async function middleware(request: NextRequest) {
     {
       cookies: {
         getAll: () => request.cookies.getAll(),
-        setAll: (cookiesToSet) => {
+        setAll: (cookiesToSet: { name: string; value: string; options?: object }[]) => {
           // Write new cookie values back onto the request so downstream
           // server components see the refreshed session.
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
