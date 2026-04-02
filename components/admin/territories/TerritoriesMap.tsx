@@ -152,6 +152,8 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
   const [mapLoaded, setMapLoaded] = useState(false)
   const [isTouch, setIsTouch] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false) // mobile sidebar toggle
+  const [mapLocked, setMapLocked] = useState(true)      // mobile: locked by default
+  const [showLockHint, setShowLockHint] = useState(false)
 
   // ── Drawing state ────────────────────────────────────────────────────────────
   const [drawMode, setDrawMode] = useState<DrawMode>('idle')
@@ -176,7 +178,14 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
 
   // ── Detect touch device ───────────────────────────────────────────────────────
   useEffect(() => {
-    setIsTouch(window.matchMedia('(pointer: coarse)').matches)
+    const touch = window.matchMedia('(pointer: coarse)').matches
+    setIsTouch(touch)
+    if (touch) {
+      setMapLocked(true)
+      setShowLockHint(true)
+      const timer = setTimeout(() => setShowLockHint(false), 3000)
+      return () => clearTimeout(timer)
+    }
   }, [])
 
   // ── Clear tooltip when leaving idle mode ─────────────────────────────────────
@@ -202,6 +211,23 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
       map.doubleClickZoom.enable()
     }
   }, [drawMode, mapLoaded])
+
+  // ── Mobile map lock/unlock ────────────────────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapLoaded || !isTouch) return
+    // During drawing the map must be interactive; otherwise respect mapLocked
+    const shouldLock = mapLocked && drawMode === 'idle'
+    if (shouldLock) {
+      map.scrollZoom.disable()
+      map.dragPan.disable()
+      map.touchZoomRotate.disable()
+    } else {
+      map.scrollZoom.enable()
+      map.dragPan.enable()
+      map.touchZoomRotate.enable()
+    }
+  }, [mapLocked, isTouch, mapLoaded, drawMode])
 
   // ── Freehand: raw canvas event listeners (desktop only) ───────────────────────
   useEffect(() => {
@@ -710,6 +736,55 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
             >
               {t('draw_cancel')}
             </button>
+          </div>
+        )}
+
+        {/* ── Mobile map lock/unlock button ─────────────────────────────────── */}
+        {!isDrawing && isTouch && (
+          <button
+            onClick={() => setMapLocked(prev => !prev)}
+            className={cn(
+              'lg:hidden absolute bottom-4 left-4 z-10',
+              'flex items-center gap-2 px-3 h-10 rounded-xl',
+              'backdrop-blur-sm border shadow-md',
+              'font-body text-xs font-medium transition-colors',
+              mapLocked
+                ? 'bg-brand-navy/95 text-white border-white/10'
+                : 'bg-brand-teal/90 text-white border-brand-teal/30',
+            )}
+          >
+            {mapLocked ? (
+              /* Lock icon */
+              <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            ) : (
+              /* Unlock icon */
+              <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+              </svg>
+            )}
+            {mapLocked ? t('map_lock_activate') : t('map_lock_lock')}
+          </button>
+        )}
+
+        {/* ── Mobile lock hint overlay (disappears after 3 s) ───────────────── */}
+        {showLockHint && (
+          <div className={cn(
+            'lg:hidden absolute inset-x-4 bottom-16 z-10',
+            'flex items-center justify-center',
+            'bg-brand-navy/90 backdrop-blur-sm text-white',
+            'rounded-xl border border-white/10 shadow-lg',
+            'px-4 py-3 pointer-events-none',
+            'animate-fade-in',
+          )}>
+            <svg className="w-4 h-4 mr-2 shrink-0 text-brand-teal" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <p className="font-body text-xs">{t('map_lock_hint')}</p>
           </div>
         )}
 

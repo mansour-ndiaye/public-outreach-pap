@@ -141,7 +141,10 @@
       "delete_confirm": "Delete permanently",
       "delete_cancel": "Cancel",
       "delete_error": "Failed to delete territory.",
-      "delete_deleting": "Deleting..."
+      "delete_deleting": "Deleting...",
+      "map_lock_activate": "Activate map",
+      "map_lock_lock": "Lock map",
+      "map_lock_hint": "Tap to activate map"
     },
     "placeholder": {
       "coming_soon": "Under construction",

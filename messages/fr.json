@@ -141,7 +141,10 @@
       "delete_confirm": "Supprimer définitivement",
       "delete_cancel": "Annuler",
       "delete_error": "Impossible de supprimer le terrain.",
-      "delete_deleting": "Suppression..."
+      "delete_deleting": "Suppression...",
+      "map_lock_activate": "Activer la carte",
+      "map_lock_lock": "Verrouiller",
+      "map_lock_hint": "Touchez pour activer la carte"
     },
     "placeholder": {
       "coming_soon": "En construction",
