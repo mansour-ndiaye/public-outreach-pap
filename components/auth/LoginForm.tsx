@@ -47,20 +47,11 @@ export function LoginForm() {
         return
       }
 
-      // Step 2: fetch role from public.users
-      const { data: profile, error: profileError } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', authData.user.id)
-        .single() as { data: { role: string } | null; error: unknown }
-
-      if (profileError || !profile) {
-        setError(t('error_generic'))
-        return
-      }
+      // Step 2: read role from user_metadata (set at creation time, no DB query needed)
+      const role = authData.user.user_metadata?.role as UserRole | undefined
 
       // Step 3: redirect to role-specific dashboard
-      const route = ROLE_ROUTES[profile.role as UserRole] ?? 'field'
+      const route = ROLE_ROUTES[role ?? 'field_team'] ?? 'field'
       router.push(`/${locale}/${route}/dashboard`)
       router.refresh()
     } catch {
