@@ -34,11 +34,16 @@ export function LoginForm() {
     try {
       const supabase = createClient()
 
+      console.log('[PAP login] 1. Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
+      console.log('[PAP login] 2. Anon key present:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+      console.log('[PAP login] 3. Attempting signInWithPassword for:', email)
+
       // Step 1: authenticate
       const { data: authData, error: authError } =
         await supabase.auth.signInWithPassword({ email, password })
 
       if (authError) {
+        console.error('[PAP login] 4. AUTH FAILED:', authError.message, '| status:', authError.status)
         setError(
           authError.message.toLowerCase().includes('invalid')
             ? t('error_invalid')
@@ -47,14 +52,21 @@ export function LoginForm() {
         return
       }
 
+      console.log('[PAP login] 4. Auth SUCCESS — user id:', authData.user.id)
+      console.log('[PAP login] 5. user_metadata:', JSON.stringify(authData.user.user_metadata))
+      console.log('[PAP login] 6. email_confirmed_at:', authData.user.email_confirmed_at)
+
       // Step 2: read role from user_metadata (set at creation time, no DB query needed)
       const role = authData.user.user_metadata?.role as UserRole | undefined
+      console.log('[PAP login] 7. role from metadata:', role)
 
       // Step 3: redirect to role-specific dashboard
       const route = ROLE_ROUTES[role ?? 'field_team'] ?? 'field'
+      console.log('[PAP login] 8. Redirecting to:', `/${locale}/${route}/dashboard`)
       router.push(`/${locale}/${route}/dashboard`)
       router.refresh()
-    } catch {
+    } catch (err) {
+      console.error('[PAP login] UNEXPECTED EXCEPTION:', err)
       setError(t('error_generic'))
     } finally {
       setLoading(false)
