@@ -93,18 +93,21 @@ export default async function AdminDashboardPage({ params: { locale } }: Props) 
           value={stats.users}
           icon={<IconUsers />}
           accent="navy"
+          href={`/${locale}/admin/users`}
         />
         <StatsCard
           label={t('stats.territories')}
           value={stats.territories}
           icon={<IconMap />}
           accent="teal"
+          href={`/${locale}/admin/territories`}
         />
         <StatsCard
           label={t('stats.teams')}
           value={stats.teams}
           icon={<IconTeams />}
           accent="red"
+          href={`/${locale}/admin/teams`}
         />
         <StatsCard
           label={t('stats.assignments_today')}

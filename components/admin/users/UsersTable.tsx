@@ -199,9 +199,10 @@ export function UsersTable({ users }: UsersTableProps) {
   )
   const btnGhost = cn(
     'flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl',
-    'bg-slate-100 text-slate-700 font-body text-sm font-semibold',
-    'dark:bg-white/8 dark:text-white/70',
-    'hover:bg-slate-200 dark:hover:bg-white/12',
+    'bg-transparent font-body text-sm font-semibold',
+    'border border-slate-200 text-slate-700',
+    'dark:border-white/[0.12] dark:text-white/70',
+    'hover:bg-slate-100 dark:hover:bg-white/[0.06]',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2',
     'active:scale-[0.98]',
     'transition-[background-color,transform] duration-150',

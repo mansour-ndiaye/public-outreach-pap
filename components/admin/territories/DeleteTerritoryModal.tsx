@@ -58,10 +58,11 @@ export function DeleteTerritoryModal({ territory, onDeleted, onCancel }: Props) 
           onClick={onCancel}
           disabled={isPending}
           className={cn(
-            'flex-1 h-11 rounded-xl font-body text-sm font-medium',
-            'border border-slate-200 dark:border-white/[0.10]',
-            'text-slate-600 dark:text-white/60',
-            'hover:bg-slate-50 dark:hover:bg-white/[0.04]',
+            'flex-1 h-11 rounded-xl font-body text-sm font-semibold',
+            'bg-transparent',
+            'border border-slate-200 text-slate-700',
+            'dark:border-white/[0.12] dark:text-white/70',
+            'hover:bg-slate-100 dark:hover:bg-white/[0.06]',
             'transition-colors disabled:opacity-50',
           )}
         >
