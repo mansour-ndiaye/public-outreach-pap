@@ -52,6 +52,128 @@
     "coming_soon": "Dashboard under construction",
     "coming_soon_desc": "The next development phase will bring full features: territory map, PAC entry, PPH reports, and more."
   },
+  "manager": {
+    "nav": {
+      "title": "Territory Manager",
+      "logout": "Log out"
+    },
+    "tabs": {
+      "map": "Map",
+      "teams": "Teams",
+      "performance": "Performance"
+    },
+    "map": {
+      "assign_btn": "Assign zone",
+      "panel_title": "Assign daily zone",
+      "team": "Team",
+      "team_placeholder": "Select a team",
+      "date": "Date",
+      "note": "Note / Instructions",
+      "note_placeholder": "Instructions for the team...",
+      "start_drawing": "Start drawing",
+      "finish": "Finish and save",
+      "finish_street": "Finish street",
+      "undo_street": "Undo last street",
+      "cancel": "Cancel",
+      "drawing_hint": "Click on the map to trace the team's streets",
+      "zone_saved": "Zone assigned successfully",
+      "zone_error": "Failed to assign zone",
+      "no_streets": "Draw at least one street",
+      "no_team": "Select a team first",
+      "legend_territories": "Territories",
+      "legend_today": "Today's zones",
+      "legend_past": "Past zones",
+      "legend_drawing": "Currently drawing"
+    },
+    "teams": {
+      "title": "Teams overview",
+      "col_team": "Team",
+      "col_manager": "Supervisor",
+      "col_territory": "Territory",
+      "col_status": "Today's zone",
+      "col_last_eod": "Last EOD",
+      "col_pph": "Recent PPH",
+      "status_assigned": "Assigned",
+      "status_pending": "Not assigned",
+      "no_territory": "No territory",
+      "no_eod": "—",
+      "empty": "No teams"
+    },
+    "performance": {
+      "title": "Performance",
+      "week_pac": "PACs this week",
+      "avg_pph": "Average PPH",
+      "canvas_hours": "Canvas hours",
+      "recent_eods": "Recent EOD submissions",
+      "col_date": "Date",
+      "col_team": "Team",
+      "col_pph": "PPH",
+      "col_hours": "Hours",
+      "col_pac": "PAC $",
+      "col_note": "Note",
+      "empty": "No submissions yet",
+      "no_note": "—"
+    }
+  },
+  "supervisor": {
+    "nav": {
+      "title": "Supervisor",
+      "logout": "Log out"
+    },
+    "map": {
+      "title": "Today's zone",
+      "no_zone": "No zone assigned for today. Contact your manager.",
+      "no_territory": "No territory assigned to your team.",
+      "progress": "% of territory covered",
+      "today_note": "Note from your manager:",
+      "draw_hint": "Click on the map to trace streets you covered",
+      "finish_street": "Finish street",
+      "undo_street": "Undo last street",
+      "legend_zone": "Assigned zone",
+      "legend_today": "Streets covered today",
+      "legend_past": "Past streets",
+      "legend_territory": "Territory",
+      "ai_title": "AI Assistant",
+      "ai_placeholder": "E.g. Rue Saint-Denis from Laurier to Mont-Royal, Av. Ogilvy...",
+      "ai_draw": "Draw",
+      "ai_confirm": "Confirm",
+      "ai_retry": "Retry",
+      "ai_drawing": "Geocoding...",
+      "ai_no_results": "No results found for this street",
+      "mic_label": "Dictate streets"
+    },
+    "eod": {
+      "title": "End of Day Report",
+      "submitted_title": "Report submitted",
+      "submitted_desc": "Your report has been successfully submitted for today.",
+      "pph": "PPH — PAC Per Hour",
+      "canvas_hours": "Canvas hours",
+      "pac_amount": "Total PAC amount $",
+      "pac_count": "Number of PACs",
+      "pac_average": "Average PAC $ (calculated)",
+      "recalls": "Recalls",
+      "note": "Field note",
+      "note_placeholder": "How did the day go?",
+      "submit": "Submit report",
+      "submitting": "Submitting...",
+      "error_required": "Please fill in all required fields",
+      "error_streets": "Please draw at least one street covered",
+      "error_submit": "Submission failed. Please try again.",
+      "required": "*"
+    },
+    "history": {
+      "title": "EOD History",
+      "empty": "No previous reports",
+      "col_date": "Date",
+      "col_pph": "PPH",
+      "col_hours": "Hours",
+      "col_pac": "PAC $",
+      "col_note": "Note",
+      "view_map": "View map",
+      "no_note": "—",
+      "streets_drawn": "streets drawn"
+    }
+  },
   "admin": {
     "nav": {
       "dashboard": "Dashboard",

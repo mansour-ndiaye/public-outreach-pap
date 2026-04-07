@@ -52,6 +52,128 @@
     "coming_soon": "Tableau de bord en construction",
     "coming_soon_desc": "La prochaine phase de développement apportera les fonctionnalités complètes : carte des terrains, saisie des PAC, rapports PPH et plus."
   },
+  "manager": {
+    "nav": {
+      "title": "Gestionnaire de terrain",
+      "logout": "Déconnexion"
+    },
+    "tabs": {
+      "map": "Carte",
+      "teams": "Équipes",
+      "performance": "Performance"
+    },
+    "map": {
+      "assign_btn": "Assigner une zone",
+      "panel_title": "Assigner une zone journalière",
+      "team": "Équipe",
+      "team_placeholder": "Sélectionnez une équipe",
+      "date": "Date",
+      "note": "Note / Instructions",
+      "note_placeholder": "Instructions pour l'équipe...",
+      "start_drawing": "Commencer le dessin",
+      "finish": "Terminer et sauvegarder",
+      "finish_street": "Terminer la rue",
+      "undo_street": "Annuler la dernière rue",
+      "cancel": "Annuler",
+      "drawing_hint": "Cliquez sur la carte pour tracer les rues de l'équipe",
+      "zone_saved": "Zone assignée avec succès",
+      "zone_error": "Impossible d'assigner la zone",
+      "no_streets": "Tracez au moins une rue",
+      "no_team": "Sélectionnez une équipe",
+      "legend_territories": "Terrains",
+      "legend_today": "Zones aujourd'hui",
+      "legend_past": "Zones précédentes",
+      "legend_drawing": "En cours de dessin"
+    },
+    "teams": {
+      "title": "Vue d'ensemble des équipes",
+      "col_team": "Équipe",
+      "col_manager": "Superviseur",
+      "col_territory": "Terrain",
+      "col_status": "Zone aujourd'hui",
+      "col_last_eod": "Dernier EOD",
+      "col_pph": "PPH récent",
+      "status_assigned": "Assignée",
+      "status_pending": "Non assignée",
+      "no_territory": "Aucun terrain",
+      "no_eod": "—",
+      "empty": "Aucune équipe"
+    },
+    "performance": {
+      "title": "Performance",
+      "week_pac": "PACs cette semaine",
+      "avg_pph": "PPH moyen",
+      "canvas_hours": "Heures terrain",
+      "recent_eods": "Soumissions EOD récentes",
+      "col_date": "Date",
+      "col_team": "Équipe",
+      "col_pph": "PPH",
+      "col_hours": "Heures",
+      "col_pac": "PAC $",
+      "col_note": "Note",
+      "empty": "Aucune soumission pour le moment",
+      "no_note": "—"
+    }
+  },
+  "supervisor": {
+    "nav": {
+      "title": "Superviseur",
+      "logout": "Déconnexion"
+    },
+    "map": {
+      "title": "Zone du jour",
+      "no_zone": "Aucune zone assignée pour aujourd'hui. Contactez votre gestionnaire.",
+      "no_territory": "Aucun terrain assigné à votre équipe.",
+      "progress": "% du territoire couvert",
+      "today_note": "Note de votre gestionnaire :",
+      "draw_hint": "Cliquez sur la carte pour tracer vos rues",
+      "finish_street": "Terminer la rue",
+      "undo_street": "Annuler la dernière rue",
+      "legend_zone": "Zone assignée",
+      "legend_today": "Rues couvertes aujourd'hui",
+      "legend_past": "Rues passées",
+      "legend_territory": "Terrain",
+      "ai_title": "Assistant IA",
+      "ai_placeholder": "Ex: Rue Saint-Denis de Laurier à Mont-Royal, Av. Ogilvy...",
+      "ai_draw": "Dessiner",
+      "ai_confirm": "Confirmer",
+      "ai_retry": "Réessayer",
+      "ai_drawing": "Géocodage en cours...",
+      "ai_no_results": "Aucun résultat trouvé pour cette rue",
+      "mic_label": "Dicter les rues"
+    },
+    "eod": {
+      "title": "Rapport de fin de journée",
+      "submitted_title": "Rapport soumis",
+      "submitted_desc": "Votre rapport a été soumis avec succès pour aujourd'hui.",
+      "pph": "PPH — PAC Par Heure",
+      "canvas_hours": "Heures de terrain",
+      "pac_amount": "Montant total PAC $",
+      "pac_count": "Nombre de PACs",
+      "pac_average": "PAC moyen $ (calculé)",
+      "recalls": "Rappels",
+      "note": "Note de terrain",
+      "note_placeholder": "Comment s'est passée la journée ?",
+      "submit": "Soumettre le rapport",
+      "submitting": "Envoi en cours...",
+      "error_required": "Veuillez remplir tous les champs requis",
+      "error_streets": "Veuillez tracer au moins une rue couverte",
+      "error_submit": "Erreur lors de la soumission. Réessayez.",
+      "required": "*"
+    },
+    "history": {
+      "title": "Historique EOD",
+      "empty": "Aucun rapport précédent",
+      "col_date": "Date",
+      "col_pph": "PPH",
+      "col_hours": "Heures",
+      "col_pac": "PAC $",
+      "col_note": "Note",
+      "view_map": "Voir la carte",
+      "no_note": "—",
+      "streets_drawn": "rues dessinées"
+    }
+  },
   "admin": {
     "nav": {
       "dashboard": "Tableau de bord",

@@ -154,22 +154,32 @@ export type Database = {
       daily_entries: {
         Row: {
           id:               string
-          assignment_id:    string
+          assignment_id:    string | null
+          team_id:          string | null
+          entry_date:       string | null
           pac_count:        number
           pac_total_amount: number
           pac_average:      number
           pph:              number
           recalls_count:    number
+          canvas_hours:     number | null
+          note:             string | null
+          covered_streets:  Record<string, unknown> | null
           created_at:       string
         }
         Insert: {
           id?:               string
-          assignment_id:     string
+          assignment_id?:    string | null
+          team_id?:          string | null
+          entry_date?:       string | null
           pac_count?:        number
           pac_total_amount?: number
           pac_average?:      number
           pph?:              number
           recalls_count?:    number
+          canvas_hours?:     number | null
+          note?:             string | null
+          covered_streets?:  Record<string, unknown> | null
           created_at?:       string
         }
         Update: {
@@ -178,6 +188,35 @@ export type Database = {
           pac_average?:      number
           pph?:              number
           recalls_count?:    number
+          canvas_hours?:     number | null
+          note?:             string | null
+          covered_streets?:  Record<string, unknown> | null
+        }
+        Relationships: []
+      }
+
+      daily_zones: {
+        Row: {
+          id:          string
+          team_id:     string
+          assigned_by: string
+          date:        string
+          streets:     Record<string, unknown>
+          note:        string | null
+          created_at:  string
+        }
+        Insert: {
+          id?:          string
+          team_id:      string
+          assigned_by:  string
+          date:         string
+          streets?:     Record<string, unknown>
+          note?:        string | null
+          created_at?:  string
+        }
+        Update: {
+          streets?: Record<string, unknown>
+          note?:    string | null
         }
         Relationships: []
       }

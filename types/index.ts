@@ -11,6 +11,7 @@ export type TeamMemberRow      = Database['public']['Tables']['team_members']['R
 export type TeamTerritoryRow   = Database['public']['Tables']['team_territories']['Row']
 export type AssignmentRow      = Database['public']['Tables']['assignments']['Row']
 export type DailyEntryRow      = Database['public']['Tables']['daily_entries']['Row']
+export type DailyZoneRow       = Database['public']['Tables']['daily_zones']['Row']
 
 // Enriched team type with joined data (used in Teams management page)
 export type TeamWithDetails = {
