@@ -76,6 +76,46 @@ export type Database = {
         Relationships: []
       }
 
+      team_members: {
+        Row: {
+          id:         string
+          team_id:    string
+          user_id:    string
+          created_at: string
+        }
+        Insert: {
+          id?:         string
+          team_id:     string
+          user_id:     string
+          created_at?: string
+        }
+        Update: {
+          team_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+
+      team_territories: {
+        Row: {
+          id:           string
+          team_id:      string
+          territory_id: string
+          created_at:   string
+        }
+        Insert: {
+          id?:           string
+          team_id:       string
+          territory_id:  string
+          created_at?:   string
+        }
+        Update: {
+          team_id?:      string
+          territory_id?: string
+        }
+        Relationships: []
+      }
+
       assignments: {
         Row: {
           id:            string
