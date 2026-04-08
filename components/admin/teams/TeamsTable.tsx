@@ -1,29 +1,26 @@
 'use client'
 
-import { useState, useMemo, useTransition, useRef, useEffect } from 'react'
+import { useState, useMemo, useTransition, useEffect } from 'react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { createTeam, updateTeam, deleteTeam } from '@/lib/supabase/team-actions'
 import type { TeamWithDetails, TerritoryRow } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type ManagerUser = { id: string; full_name: string | null; email: string }
-type FieldUser   = { id: string; full_name: string | null; email: string }
+type SupervisorUser = { id: string; full_name: string | null; email: string }
 
 type TeamForm = {
   name:         string
-  managerId:    string
-  memberIds:    string[]
+  supervisorIds: string[]
   territoryIds: string[]
 }
 
-const emptyForm: TeamForm = { name: '', managerId: '', memberIds: [], territoryIds: [] }
+const emptyForm: TeamForm = { name: '', supervisorIds: [], territoryIds: [] }
 
 interface TeamsTableProps {
-  teams:       TeamWithDetails[]
-  managers:    ManagerUser[]
-  fieldUsers:  FieldUser[]
-  territories: TerritoryRow[]
+  teams:           TeamWithDetails[]
+  supervisorUsers: SupervisorUser[]
+  territories:     TerritoryRow[]
 }
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
@@ -34,7 +31,6 @@ const inputCls = cn(
   'focus-visible:outline-none focus-visible:border-brand-teal focus-visible:ring-2 focus-visible:ring-brand-teal/20',
   'transition-[border-color,box-shadow] duration-200',
 )
-const selectCls = cn(inputCls, 'cursor-pointer')
 
 const btnPrimary = cn(
   'flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl',
@@ -135,7 +131,7 @@ function Spinner() {
 
 function Avatar({ name }: { name: string }) {
   return (
-    <div className="w-6 h-6 rounded-full bg-brand-navy flex items-center justify-center text-white font-bold text-[10px] shrink-0 select-none">
+    <div className="w-6 h-6 rounded-full bg-brand-teal flex items-center justify-center text-white font-bold text-[10px] shrink-0 select-none">
       {name.charAt(0).toUpperCase()}
     </div>
   )
@@ -147,19 +143,15 @@ const STATUS_DOT: Record<string, string> = {
   inactive: 'bg-gray-400',
 }
 
-// ── Checklist (used for members + territories) ────────────────────────────────
+// ── Checklist ─────────────────────────────────────────────────────────────────
 function Checklist<T extends { id: string }>({
-  items,
-  selected,
-  onChange,
-  emptyLabel,
-  renderItem,
+  items, selected, onChange, emptyLabel, renderItem,
 }: {
-  items:       T[]
-  selected:    string[]
-  onChange:    (ids: string[]) => void
-  emptyLabel:  string
-  renderItem:  (item: T) => React.ReactNode
+  items:      T[]
+  selected:   string[]
+  onChange:   (ids: string[]) => void
+  emptyLabel: string
+  renderItem: (item: T) => React.ReactNode
 }) {
   const toggle = (id: string) =>
     onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id])
@@ -192,21 +184,15 @@ function Checklist<T extends { id: string }>({
   )
 }
 
-// ── Team form body (shared between create and edit modals) ────────────────────
+// ── Team form body ────────────────────────────────────────────────────────────
 function TeamFormBody({
-  form,
-  onChange,
-  managers,
-  fieldUsers,
-  territories,
-  t,
+  form, onChange, supervisorUsers, territories, t,
 }: {
-  form:        TeamForm
-  onChange:    (f: TeamForm) => void
-  managers:    ManagerUser[]
-  fieldUsers:  FieldUser[]
-  territories: TerritoryRow[]
-  t:           ReturnType<typeof useTranslations<'admin.teams'>>
+  form:            TeamForm
+  onChange:        (f: TeamForm) => void
+  supervisorUsers: SupervisorUser[]
+  territories:     TerritoryRow[]
+  t:               ReturnType<typeof useTranslations<'admin.teams'>>
 }) {
   return (
     <div className="space-y-4">
@@ -222,27 +208,13 @@ function TeamFormBody({
         />
       </Field>
 
-      {/* Manager */}
-      <Field label={t('modal_manager')}>
-        <select
-          value={form.managerId}
-          onChange={e => onChange({ ...form, managerId: e.target.value })}
-          className={selectCls}
-        >
-          <option value="">{t('modal_manager_none')}</option>
-          {managers.map(m => (
-            <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
-          ))}
-        </select>
-      </Field>
-
-      {/* Members */}
-      <Field label={t('modal_members')}>
+      {/* Supervisors */}
+      <Field label={t('modal_supervisors')}>
         <Checklist
-          items={fieldUsers}
-          selected={form.memberIds}
-          onChange={ids => onChange({ ...form, memberIds: ids })}
-          emptyLabel={t('modal_members_none')}
+          items={supervisorUsers}
+          selected={form.supervisorIds}
+          onChange={ids => onChange({ ...form, supervisorIds: ids })}
+          emptyLabel={t('modal_supervisors_none')}
           renderItem={user => (
             <div className="flex items-center gap-2 min-w-0">
               <Avatar name={user.full_name || user.email} />
@@ -252,9 +224,9 @@ function TeamFormBody({
             </div>
           )}
         />
-        {form.memberIds.length > 0 && (
+        {form.supervisorIds.length > 0 && (
           <p className="font-body text-xs text-brand-teal mt-1">
-            {t('modal_members_selected', { count: form.memberIds.length })}
+            {t('modal_supervisors_selected', { count: form.supervisorIds.length })}
           </p>
         )}
       </Field>
@@ -291,7 +263,7 @@ function TeamFormBody({
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTableProps) {
+export function TeamsTable({ teams, supervisorUsers, territories }: TeamsTableProps) {
   const t = useTranslations('admin.teams')
   const [, startTransition] = useTransition()
   const [isTouch, setIsTouch] = useState(false)
@@ -309,15 +281,15 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
   }, [teams, search])
 
   // ── Modal state ────────────────────────────────────────────────────────────
-  const [createOpen, setCreateOpen]       = useState(false)
-  const [editTeam, setEditTeam]           = useState<TeamWithDetails | null>(null)
-  const [deleteTarget, setDeleteTarget]   = useState<TeamWithDetails | null>(null)
-  const [form, setForm]                   = useState<TeamForm>(emptyForm)
-  const [createError, setCreateError]     = useState<string | null>(null)
-  const [editError, setEditError]         = useState<string | null>(null)
-  const [deleteError, setDeleteError]     = useState<string | null>(null)
+  const [createOpen,   setCreateOpen]   = useState(false)
+  const [editTeam,     setEditTeam]     = useState<TeamWithDetails | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<TeamWithDetails | null>(null)
+  const [form,         setForm]         = useState<TeamForm>(emptyForm)
+  const [createError,  setCreateError]  = useState<string | null>(null)
+  const [editError,    setEditError]    = useState<string | null>(null)
+  const [deleteError,  setDeleteError]  = useState<string | null>(null)
   const [createLoading, setCreateLoading] = useState(false)
-  const [editLoading, setEditLoading]     = useState(false)
+  const [editLoading,   setEditLoading]   = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -329,10 +301,9 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
 
   const openEdit = (team: TeamWithDetails) => {
     setForm({
-      name:         team.name,
-      managerId:    team.manager_id ?? '',
-      memberIds:    team.member_ids,
-      territoryIds: team.territory_ids,
+      name:          team.name,
+      supervisorIds: team.member_ids,
+      territoryIds:  team.territory_ids,
     })
     setEditError(null)
     setEditTeam(team)
@@ -344,17 +315,14 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
     setCreateError(null)
     startTransition(async () => {
       const result = await createTeam({
-        name:         form.name.trim(),
-        manager_id:   form.managerId || null,
-        member_ids:   form.memberIds,
+        name:          form.name.trim(),
+        manager_id:    null,
+        member_ids:    form.supervisorIds,
         territory_ids: form.territoryIds,
       })
       setCreateLoading(false)
-      if (result.error) {
-        setCreateError(result.error)
-      } else {
-        setCreateOpen(false)
-      }
+      if (result.error) setCreateError(result.error)
+      else setCreateOpen(false)
     })
   }
 
@@ -364,17 +332,14 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
     setEditError(null)
     startTransition(async () => {
       const result = await updateTeam(editTeam.id, {
-        name:         form.name.trim(),
-        manager_id:   form.managerId || null,
-        member_ids:   form.memberIds,
+        name:          form.name.trim(),
+        manager_id:    null,
+        member_ids:    form.supervisorIds,
         territory_ids: form.territoryIds,
       })
       setEditLoading(false)
-      if (result.error) {
-        setEditError(result.error)
-      } else {
-        setEditTeam(null)
-      }
+      if (result.error) setEditError(result.error)
+      else setEditTeam(null)
     })
   }
 
@@ -385,15 +350,11 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
     startTransition(async () => {
       const result = await deleteTeam(deleteTarget.id)
       setDeleteLoading(false)
-      if (result.error) {
-        setDeleteError(result.error)
-      } else {
-        setDeleteTarget(null)
-      }
+      if (result.error) setDeleteError(result.error)
+      else setDeleteTarget(null)
     })
   }
 
-  // ── Modal wrappers (desktop vs mobile) ────────────────────────────────────
   const ModalWrapper = isTouch ? BottomSheet : Modal
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -432,7 +393,7 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50 dark:bg-white/[0.03] border-b border-slate-200/80 dark:border-white/[0.07]">
-                {[t('col_name'), t('col_manager'), t('col_members'), t('col_territories'), t('col_actions')].map(col => (
+                {[t('col_name'), t('col_supervisors'), t('col_territories'), t('col_actions')].map(col => (
                   <th key={col} className="px-5 py-3.5 text-left font-body text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-white/40">
                     {col}
                   </th>
@@ -442,7 +403,7 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
             <tbody className="divide-y divide-slate-100 dark:divide-white/[0.05]">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-12 text-center font-body text-sm text-slate-400 dark:text-white/30">
+                  <td colSpan={4} className="px-5 py-12 text-center font-body text-sm text-slate-400 dark:text-white/30">
                     {t('empty')}
                   </td>
                 </tr>
@@ -465,20 +426,13 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
                       </div>
                     </td>
 
-                    {/* Manager */}
-                    <td className="px-5 py-4 font-body text-sm text-slate-600 dark:text-white/60">
-                      {team.manager_name ?? (
-                        <span className="text-slate-300 dark:text-white/25 italic">{t('no_manager')}</span>
-                      )}
-                    </td>
-
-                    {/* Members count */}
+                    {/* Supervisors count */}
                     <td className="px-5 py-4">
                       <span className={cn(
                         'inline-flex items-center gap-1 px-2.5 py-1 rounded-full',
                         'font-body text-xs font-semibold',
-                        'bg-brand-navy/8 dark:bg-white/10 text-brand-navy dark:text-white/80',
-                        'border border-brand-navy/15 dark:border-white/10',
+                        'bg-brand-teal/10 text-brand-teal',
+                        'border border-brand-teal/20',
                       )}>
                         {team.member_ids.length}
                       </span>
@@ -489,8 +443,8 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
                       <span className={cn(
                         'inline-flex items-center gap-1 px-2.5 py-1 rounded-full',
                         'font-body text-xs font-semibold',
-                        'bg-brand-teal/10 text-brand-teal',
-                        'border border-brand-teal/20',
+                        'bg-brand-navy/8 dark:bg-white/10 text-brand-navy dark:text-white/80',
+                        'border border-brand-navy/15 dark:border-white/10',
                       )}>
                         {team.territory_ids.length}
                       </span>
@@ -540,21 +494,15 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          Modal: Create team
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ Modal: Create ══ */}
       {createOpen && (
         <ModalWrapper onClose={() => setCreateOpen(false)}>
           <h2 className="font-display text-lg font-bold text-brand-navy dark:text-white mb-6">
             {t('modal_create_title')}
           </h2>
           <TeamFormBody
-            form={form}
-            onChange={setForm}
-            managers={managers}
-            fieldUsers={fieldUsers}
-            territories={territories}
-            t={t}
+            form={form} onChange={setForm}
+            supervisorUsers={supervisorUsers} territories={territories} t={t}
           />
           {createError && <div className="mt-4"><ErrorBanner message={createError} /></div>}
           <div className="flex gap-3 mt-7">
@@ -572,21 +520,15 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
         </ModalWrapper>
       )}
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          Modal: Edit team
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ Modal: Edit ══ */}
       {editTeam && (
         <ModalWrapper onClose={() => setEditTeam(null)}>
           <h2 className="font-display text-lg font-bold text-brand-navy dark:text-white mb-6">
             {t('modal_edit_title')}
           </h2>
           <TeamFormBody
-            form={form}
-            onChange={setForm}
-            managers={managers}
-            fieldUsers={fieldUsers}
-            territories={territories}
-            t={t}
+            form={form} onChange={setForm}
+            supervisorUsers={supervisorUsers} territories={territories} t={t}
           />
           {editError && <div className="mt-4"><ErrorBanner message={editError} /></div>}
           <div className="flex gap-3 mt-7">
@@ -604,9 +546,7 @@ export function TeamsTable({ teams, managers, fieldUsers, territories }: TeamsTa
         </ModalWrapper>
       )}
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          Modal: Delete team
-      ══════════════════════════════════════════════════════════════════════ */}
+      {/* ══ Modal: Delete ══ */}
       {deleteTarget && (
         <ModalWrapper onClose={() => setDeleteTarget(null)}>
           <div className="flex items-center gap-3 mb-5">

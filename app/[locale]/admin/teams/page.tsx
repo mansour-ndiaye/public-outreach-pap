@@ -1,5 +1,5 @@
 import { getTranslations } from 'next-intl/server'
-import { fetchTeamsWithDetails, fetchManagerUsers, fetchFieldUsers } from '@/lib/supabase/team-actions'
+import { fetchTeamsWithDetails, fetchSupervisorUsers } from '@/lib/supabase/team-actions'
 import { fetchTerritories } from '@/lib/supabase/territory-actions'
 import { TeamsTable } from '@/components/admin/teams/TeamsTable'
 
@@ -12,10 +12,9 @@ interface Props {
 export default async function AdminTeamsPage({ params: { locale: _locale } }: Props) {
   const t = await getTranslations('admin.teams')
 
-  const [teams, managers, fieldUsers, territories] = await Promise.all([
+  const [teams, supervisorUsers, territories] = await Promise.all([
     fetchTeamsWithDetails(),
-    fetchManagerUsers(),
-    fetchFieldUsers(),
+    fetchSupervisorUsers(),
     fetchTerritories(),
   ])
 
@@ -34,8 +33,7 @@ export default async function AdminTeamsPage({ params: { locale: _locale } }: Pr
 
       <TeamsTable
         teams={teams}
-        managers={managers}
-        fieldUsers={fieldUsers}
+        supervisorUsers={supervisorUsers}
         territories={territories}
       />
 

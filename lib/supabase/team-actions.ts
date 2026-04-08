@@ -85,6 +85,17 @@ export async function fetchFieldUsers(): Promise<Pick<UserRow, 'id' | 'full_name
   return (data ?? []) as Pick<UserRow, 'id' | 'full_name' | 'email'>[]
 }
 
+// ── Fetch supervisors (used as team members) ──────────────────────────────────
+export async function fetchSupervisorUsers(): Promise<Pick<UserRow, 'id' | 'full_name' | 'email'>[]> {
+  const supabase = createClient()
+  const { data } = await supabase
+    .from('users')
+    .select('id, full_name, email')
+    .eq('role', 'supervisor')
+    .order('full_name', { ascending: true })
+  return (data ?? []) as Pick<UserRow, 'id' | 'full_name' | 'email'>[]
+}
+
 // ── Create team ───────────────────────────────────────────────────────────────
 export async function createTeam(data: {
   name: string

@@ -21,20 +21,26 @@ const TEAM_COLORS = [
 ]
 
 type TeamOption = { id: string; name: string }
+type SpeechRecognitionType = {
+  lang: string; continuous: boolean; interimResults: boolean
+  start(): void; stop(): void
+  onresult: ((e: { results: { [k: number]: { [k: number]: { transcript: string } } } }) => void) | null
+  onerror: (() => void) | null
+  onend:   (() => void) | null
+}
 
 interface ManagerMapProps {
   territories:  TerritoryRow[]
   teams:        TeamOption[]
   zones:        DailyZoneWithTeam[]
   todayDate:    string
-  teamColorMap: Record<string, string> // team_id → color hex
+  teamColorMap: Record<string, string>
 }
 
 function getColor(map: Record<string, string>, teamId: string) {
   return map[teamId] ?? '#94a3b8'
 }
 
-// Polygon centroid
 function polygonCentroid(coords: number[][][]): [number, number] {
   const ring = coords[0] ?? []
   if (ring.length === 0) return MONTREAL
@@ -43,7 +49,6 @@ function polygonCentroid(coords: number[][][]): [number, number] {
   return [lng, lat]
 }
 
-// Build territory GeoJSON (polygons)
 function buildTerritoriesGeoJSON(territories: TerritoryRow[]): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -58,7 +63,6 @@ function buildTerritoriesGeoJSON(territories: TerritoryRow[]): GeoJSON.FeatureCo
   }
 }
 
-// Build zones GeoJSON (lines)
 function buildZonesGeoJSON(
   zones: DailyZoneWithTeam[],
   colorMap: Record<string, string>,
@@ -74,10 +78,8 @@ function buildZonesGeoJSON(
         ...f,
         properties: {
           ...f.properties,
-          team_id:   zone.team_id,
-          team_name: zone.team_name,
-          date:      zone.date,
-          color:     getColor(colorMap, zone.team_id),
+          team_id: zone.team_id, team_name: zone.team_name,
+          date: zone.date, color: getColor(colorMap, zone.team_id),
         },
       })
     }
@@ -85,13 +87,14 @@ function buildZonesGeoJSON(
   return { type: 'FeatureCollection', features }
 }
 
-// Drawing GeoJSON (in-progress + completed)
 function buildDrawingGeoJSON(
   currentLine: [number, number][],
   completed:   GeoJSON.Feature[],
+  aiPreview:   GeoJSON.Feature[] | null,
   color:       string,
 ): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [...completed]
+  if (aiPreview) features.push(...aiPreview)
   if (currentLine.length >= 2) {
     features.push({
       type: 'Feature',
@@ -108,25 +111,32 @@ export default function ManagerMap({
   const { resolvedTheme } = useTheme()
   const t = useTranslations('manager.map')
   const mapRef = useRef<MapRef>(null)
+  const recognitionRef = useRef<SpeechRecognitionType | null>(null)
 
   // UI state
-  const [panelOpen,    setPanelOpen]    = useState(false)
-  const [drawMode,     setDrawMode]     = useState<'idle' | 'drawing'>('idle')
-  const [saving,       setSaving]       = useState(false)
-  const [saveError,    setSaveError]    = useState('')
-  const [saveSuccess,  setSaveSuccess]  = useState(false)
-  const [cursor,       setCursor]       = useState<string>('grab')
+  const [panelOpen,   setPanelOpen]   = useState(false)
+  const [drawMode,    setDrawMode]    = useState<'idle' | 'drawing'>('idle')
+  const [saving,      setSaving]      = useState(false)
+  const [saveError,   setSaveError]   = useState('')
+  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [cursor,      setCursor]      = useState<string>('grab')
 
   // Assignment form
   const [formTeamId, setFormTeamId] = useState('')
   const [formDate,   setFormDate]   = useState(todayDate)
   const [formNote,   setFormNote]   = useState('')
 
-  // Drawing state
+  // Manual drawing state
   const [currentLine,  setCurrentLine]  = useState<[number, number][]>([])
   const [drawnStreets, setDrawnStreets] = useState<GeoJSON.Feature[]>([])
 
-  // Derived GeoJSON
+  // AI assistant state
+  const [aiInput,      setAiInput]      = useState('')
+  const [aiPending,    setAiPending]    = useState(false)
+  const [aiPreview,    setAiPreview]    = useState<GeoJSON.Feature[] | null>(null)
+  const [aiError,      setAiError]      = useState('')
+  const [isRecording,  setIsRecording]  = useState(false)
+
   const mapStyle = resolvedTheme === 'dark'
     ? 'mapbox://styles/mapbox/dark-v11'
     : 'mapbox://styles/mapbox/light-v11'
@@ -144,18 +154,16 @@ export default function ManagerMap({
   )
 
   const drawingGeoJSON = useMemo(
-    () => buildDrawingGeoJSON(currentLine, drawnStreets, getColor(teamColorMap, formTeamId)),
-    [currentLine, drawnStreets, formTeamId, teamColorMap],
+    () => buildDrawingGeoJSON(currentLine, drawnStreets, aiPreview, getColor(teamColorMap, formTeamId)),
+    [currentLine, drawnStreets, aiPreview, formTeamId, teamColorMap],
   )
 
-  // Map click handler
   const handleMapClick = useCallback((e: MapMouseEvent) => {
     if (drawMode !== 'drawing') return
     const { lng, lat } = e.lngLat
     setCurrentLine(prev => [...prev, [lng, lat]])
   }, [drawMode])
 
-  // Update cursor
   useEffect(() => {
     setCursor(drawMode === 'drawing' ? 'crosshair' : 'grab')
   }, [drawMode])
@@ -167,6 +175,9 @@ export default function ManagerMap({
     setDrawMode('idle')
     setCurrentLine([])
     setDrawnStreets([])
+    setAiInput('')
+    setAiPreview(null)
+    setAiError('')
   }
 
   const closePanel = () => {
@@ -178,6 +189,11 @@ export default function ManagerMap({
     setFormNote('')
     setFormDate(todayDate)
     setSaveError('')
+    setAiInput('')
+    setAiPreview(null)
+    setAiError('')
+    recognitionRef.current?.stop()
+    setIsRecording(false)
   }
 
   const startDrawing = () => {
@@ -185,34 +201,124 @@ export default function ManagerMap({
     setSaveError('')
     setCurrentLine([])
     setDrawnStreets([])
+    setAiPreview(null)
     setDrawMode('drawing')
   }
 
   const finishStreet = () => {
     if (currentLine.length < 2) return
-    const feature: GeoJSON.Feature = {
+    setDrawnStreets(prev => [...prev, {
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: currentLine },
       properties: { color: getColor(teamColorMap, formTeamId) },
-    }
-    setDrawnStreets(prev => [...prev, feature])
+    }])
     setCurrentLine([])
   }
 
   const undoStreet = () => {
-    if (currentLine.length > 0) {
-      setCurrentLine([])
+    if (currentLine.length > 0) setCurrentLine([])
+    else setDrawnStreets(prev => prev.slice(0, -1))
+  }
+
+  // ── AI assistant ─────────────────────────────────────────────────────────────
+  const handleAIDraw = async () => {
+    if (!aiInput.trim()) return
+    setAiPending(true)
+    setAiError('')
+    setAiPreview(null)
+
+    // Use territory centroid or Montreal as proximity hint
+    const center = (() => {
+      const firstTerr = territories.find(t => t.coordinates?.length)
+      if (firstTerr) return polygonCentroid(firstTerr.coordinates!)
+      return MONTREAL
+    })()
+
+    const segments = aiInput.split(',').map(s => s.trim()).filter(Boolean)
+    const features: GeoJSON.Feature[] = []
+
+    for (const segment of segments) {
+      try {
+        const query = encodeURIComponent(segment + ', Montréal, Québec')
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${query}.json?access_token=${MAPBOX_TOKEN}&proximity=${center[0]},${center[1]}&country=ca&language=fr&types=address,street`
+        const res = await fetch(url)
+        const data = await res.json()
+        const feature = data.features?.[0]
+        if (feature?.geometry) {
+          if (feature.geometry.type === 'LineString') {
+            features.push({ type: 'Feature', geometry: feature.geometry, properties: { ai: true, color: getColor(teamColorMap, formTeamId) } })
+          } else if (feature.geometry.type === 'Point') {
+            const [lng, lat] = feature.geometry.coordinates
+            features.push({
+              type: 'Feature',
+              geometry: { type: 'LineString', coordinates: [[lng - 0.001, lat], [lng + 0.001, lat]] },
+              properties: { ai: true, color: getColor(teamColorMap, formTeamId), name: segment },
+            })
+          }
+        }
+      } catch { /* skip failed segment */ }
+    }
+
+    setAiPending(false)
+    if (features.length === 0) {
+      setAiError(t('ai_no_results'))
     } else {
-      setDrawnStreets(prev => prev.slice(0, -1))
+      setAiPreview(features)
+      // Fit map to preview
+      if (mapRef.current) {
+        const allCoords = features.flatMap(f =>
+          f.geometry.type === 'LineString' ? (f.geometry as GeoJSON.LineString).coordinates : []
+        )
+        if (allCoords.length >= 2) {
+          const lngs = allCoords.map(c => c[0])
+          const lats = allCoords.map(c => c[1])
+          mapRef.current.fitBounds(
+            [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+            { padding: 60, duration: 800 }
+          )
+        }
+      }
     }
   }
 
-  const saveZone = async () => {
-    if (drawnStreets.length === 0 && currentLine.length < 2) {
-      setSaveError(t('no_streets'))
+  const confirmAIStreets = () => {
+    if (!aiPreview) return
+    setDrawnStreets(prev => [...prev, ...aiPreview])
+    setAiPreview(null)
+    setAiInput('')
+  }
+
+  const retryAI = () => {
+    setAiPreview(null)
+    setAiError('')
+  }
+
+  const toggleVoice = () => {
+    if (typeof window === 'undefined') return
+    const SR = (window as unknown as { SpeechRecognition?: new () => SpeechRecognitionType; webkitSpeechRecognition?: new () => SpeechRecognitionType }).SpeechRecognition
+      ?? (window as unknown as { webkitSpeechRecognition?: new () => SpeechRecognitionType }).webkitSpeechRecognition
+    if (!SR) return
+
+    if (isRecording) {
+      recognitionRef.current?.stop()
+      setIsRecording(false)
       return
     }
-    // Include in-progress line if at least 2 points
+
+    const rec = new SR()
+    rec.lang = 'fr-CA'
+    rec.continuous = false
+    rec.interimResults = false
+    rec.onresult = e => setAiInput(prev => prev ? prev + ', ' + e.results[0][0].transcript : e.results[0][0].transcript)
+    rec.onerror = () => setIsRecording(false)
+    rec.onend   = () => setIsRecording(false)
+    recognitionRef.current = rec
+    rec.start()
+    setIsRecording(true)
+  }
+
+  // ── Save zone ─────────────────────────────────────────────────────────────────
+  const saveZone = async () => {
     const allStreets = [...drawnStreets]
     if (currentLine.length >= 2) {
       allStreets.push({
@@ -221,55 +327,40 @@ export default function ManagerMap({
         properties: { color: getColor(teamColorMap, formTeamId) },
       })
     }
+    if (allStreets.length === 0) { setSaveError(t('no_streets')); return }
 
     setSaving(true)
     setSaveError('')
     const fc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: allStreets }
-    const result = await createDailyZone({
-      team_id: formTeamId, date: formDate, streets: fc, note: formNote,
-    })
+    const result = await createDailyZone({ team_id: formTeamId, date: formDate, streets: fc, note: formNote })
     setSaving(false)
 
-    if (result.error) {
-      setSaveError(result.error)
-    } else {
-      setSaveSuccess(true)
-      setTimeout(closePanel, 1500)
-    }
+    if (result.error) setSaveError(result.error)
+    else { setSaveSuccess(true); setTimeout(closePanel, 1500) }
   }
 
-  // Team labels on territories
-  const territoryLabels = useMemo(() => {
-    // Find which teams are assigned to which territories
-    return territories
-      .filter(t => t.coordinates && t.coordinates.length > 0)
-      .map(t => ({
-        id: t.id,
-        name: t.name,
-        center: polygonCentroid(t.coordinates!),
-      }))
-  }, [territories])
+  // ── Labels ────────────────────────────────────────────────────────────────────
+  const territoryLabels = useMemo(() => territories
+    .filter(t => t.coordinates?.length)
+    .map(t => ({ id: t.id, name: t.name, center: polygonCentroid(t.coordinates!) })),
+  [territories])
 
-  // Today's zone labels (team names on lines)
   const todayZoneLabels = useMemo(() => {
     const labels: { teamName: string; center: [number, number]; color: string }[] = []
     for (const zone of zones.filter(z => z.date === todayDate)) {
       const fc = zone.streets as GeoJSON.FeatureCollection
       if (!fc?.features?.length) continue
-      // Use midpoint of first line segment
       const firstLine = fc.features.find(f => f.geometry.type === 'LineString')
       if (!firstLine) continue
       const coords = (firstLine.geometry as GeoJSON.LineString).coordinates
       if (coords.length < 2) continue
       const mid = Math.floor(coords.length / 2)
-      labels.push({
-        teamName: zone.team_name,
-        center:   [coords[mid][0], coords[mid][1]] as [number, number],
-        color:    getColor(teamColorMap, zone.team_id),
-      })
+      labels.push({ teamName: zone.team_name, center: [coords[mid][0], coords[mid][1]], color: getColor(teamColorMap, zone.team_id) })
     }
     return labels
   }, [zones, todayDate, teamColorMap])
+
+  const totalDrawn = drawnStreets.length + (aiPreview?.length ?? 0)
 
   return (
     <div className="relative w-full h-full">
@@ -286,17 +377,11 @@ export default function ManagerMap({
       >
         <NavigationControl position="top-right" />
 
-        {/* Territory polygons */}
         <Source id="territories" type="geojson" data={territoriesGeoJSON}>
-          <Layer id="territories-fill" type="fill" paint={{
-            'fill-color': '#2E3192', 'fill-opacity': 0.12,
-          }} />
-          <Layer id="territories-line" type="line" paint={{
-            'line-color': '#2E3192', 'line-width': 2, 'line-opacity': 0.6,
-          }} />
+          <Layer id="territories-fill" type="fill" paint={{ 'fill-color': '#2E3192', 'fill-opacity': 0.12 }} />
+          <Layer id="territories-line" type="line" paint={{ 'line-color': '#2E3192', 'line-width': 2, 'line-opacity': 0.6 }} />
         </Source>
 
-        {/* Territory name labels */}
         {territoryLabels.map(lbl => (
           <Marker key={lbl.id} longitude={lbl.center[0]} latitude={lbl.center[1]} anchor="center">
             <div className="px-2 py-0.5 rounded-full text-[10px] font-bold font-body bg-brand-navy/80 text-white shadow-sm pointer-events-none whitespace-nowrap">
@@ -305,35 +390,22 @@ export default function ManagerMap({
           </Marker>
         ))}
 
-        {/* Past zone lines (gray) */}
         <Source id="past-zones" type="geojson" data={pastZonesGeoJSON}>
-          <Layer id="past-zones-line" type="line" paint={{
-            'line-color': '#94a3b8', 'line-width': 1.5, 'line-opacity': 0.45,
-          }} />
+          <Layer id="past-zones-line" type="line" paint={{ 'line-color': '#94a3b8', 'line-width': 1.5, 'line-opacity': 0.45 }} />
         </Source>
 
-        {/* Today's zone lines (team color) */}
         <Source id="today-zones" type="geojson" data={todayZonesGeoJSON}>
-          <Layer id="today-zones-line" type="line" paint={{
-            'line-color': ['get', 'color'],
-            'line-width': 3.5,
-            'line-opacity': 0.9,
-          }} />
+          <Layer id="today-zones-line" type="line" paint={{ 'line-color': ['get', 'color'], 'line-width': 3.5, 'line-opacity': 0.9 }} />
         </Source>
 
-        {/* Today's zone team labels */}
         {todayZoneLabels.map((lbl, i) => (
           <Marker key={i} longitude={lbl.center[0]} latitude={lbl.center[1]} anchor="center">
-            <div
-              className="px-2 py-0.5 rounded-full text-[10px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap"
-              style={{ backgroundColor: lbl.color }}
-            >
+            <div className="px-2 py-0.5 rounded-full text-[10px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap" style={{ backgroundColor: lbl.color }}>
               {lbl.teamName}
             </div>
           </Marker>
         ))}
 
-        {/* Currently drawing */}
         {drawMode === 'drawing' && (
           <Source id="drawing" type="geojson" data={drawingGeoJSON}>
             <Layer id="drawing-line" type="line" paint={{
@@ -385,7 +457,7 @@ export default function ManagerMap({
         </div>
       </div>
 
-      {/* Assignment Panel (slides from right) */}
+      {/* Assignment Panel */}
       <div className={cn(
         'absolute inset-y-0 right-0 z-30 w-full sm:w-96',
         'bg-white dark:bg-[#12163a]',
@@ -394,6 +466,7 @@ export default function ManagerMap({
         'transition-transform duration-300 ease-out',
         panelOpen ? 'translate-x-0' : 'translate-x-full',
       )}>
+
         {/* Panel header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.07]">
           <h2 className="font-display text-base font-bold text-brand-navy dark:text-white">
@@ -426,7 +499,7 @@ export default function ManagerMap({
             </div>
           )}
 
-          {/* Form fields */}
+          {/* Team selector */}
           <div>
             <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
               {t('team')} <span className="text-brand-red">*</span>
@@ -442,13 +515,9 @@ export default function ManagerMap({
                 <option key={team.id} value={team.id}>{team.name}</option>
               ))}
             </select>
-            {/* Color swatch for selected team */}
             {formTeamId && (
               <div className="flex items-center gap-2 mt-2">
-                <div
-                  className="w-4 h-4 rounded-full border-2 border-white shadow-sm"
-                  style={{ backgroundColor: getColor(teamColorMap, formTeamId) }}
-                />
+                <div className="w-4 h-4 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: getColor(teamColorMap, formTeamId) }} />
                 <span className="font-body text-xs text-slate-500 dark:text-white/50">
                   {teams.find(t => t.id === formTeamId)?.name}
                 </span>
@@ -456,52 +525,114 @@ export default function ManagerMap({
             )}
           </div>
 
+          {/* Date */}
           <div>
             <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
               {t('date')} <span className="text-brand-red">*</span>
             </label>
             <input
-              type="date"
-              value={formDate}
+              type="date" value={formDate}
               onChange={e => setFormDate(e.target.value)}
               disabled={drawMode === 'drawing'}
               className={inputCls}
             />
           </div>
 
+          {/* Note */}
           <div>
             <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
               {t('note')}
             </label>
             <textarea
-              rows={3}
-              value={formNote}
+              rows={2} value={formNote}
               onChange={e => setFormNote(e.target.value)}
               placeholder={t('note_placeholder')}
               className={cn(inputCls, 'resize-none')}
             />
           </div>
 
-          {/* Drawing hint */}
+          {/* ── Drawing tools (only visible when drawing) ── */}
           {drawMode === 'drawing' && (
-            <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/25 font-body text-sm text-brand-teal flex items-start gap-2">
-              <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>{t('drawing_hint')}</span>
-            </div>
-          )}
+            <>
+              {/* Hint */}
+              <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/25 font-body text-sm text-brand-teal flex items-start gap-2">
+                <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{t('drawing_hint')}</span>
+              </div>
 
-          {/* Streets drawn count */}
-          {(drawnStreets.length > 0 || currentLine.length > 0) && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-white/[0.06]">
-              <svg className="w-4 h-4 text-brand-navy dark:text-brand-teal" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-              </svg>
-              <span className="font-body text-sm text-slate-600 dark:text-white/60">
-                {drawnStreets.length} rue(s) + {currentLine.length > 0 ? '1 en cours' : ''}
-              </span>
-            </div>
+              {/* AI Street Assistant */}
+              <div className={cn(
+                'rounded-2xl border p-4 space-y-3',
+                'bg-slate-50 border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.07]',
+              )}>
+                <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">
+                  {t('ai_title')}
+                </p>
+
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={aiInput}
+                    onChange={e => setAiInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleAIDraw()}
+                    placeholder={t('ai_placeholder')}
+                    className={cn(inputCls, 'flex-1 text-xs py-2')}
+                  />
+                  {/* Mic button */}
+                  <button
+                    onClick={toggleVoice}
+                    aria-label={t('mic_label')}
+                    className={cn(
+                      'w-9 h-9 rounded-xl flex items-center justify-center shrink-0',
+                      isRecording
+                        ? 'bg-brand-red text-white animate-pulse'
+                        : 'bg-slate-200 text-slate-600 dark:bg-white/10 dark:text-white/60',
+                      'transition-colors duration-150',
+                    )}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+                    </svg>
+                  </button>
+                </div>
+
+                {aiError && <p className="font-body text-xs text-brand-red">{aiError}</p>}
+
+                {aiPreview ? (
+                  <div className="flex gap-2">
+                    <button onClick={confirmAIStreets} className={cn(btnSave, 'flex-1 py-2 text-xs')}>
+                      {t('ai_confirm')} ({aiPreview.length})
+                    </button>
+                    <button onClick={retryAI} className={cn(btnGhost, 'flex-1 py-2 text-xs')}>
+                      {t('ai_retry')}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleAIDraw}
+                    disabled={aiPending || !aiInput.trim()}
+                    className={cn(btnGhost, 'w-full py-2 text-xs')}
+                  >
+                    {aiPending ? t('ai_drawing') : t('ai_draw')}
+                  </button>
+                )}
+              </div>
+
+              {/* Streets drawn counter */}
+              {totalDrawn > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-white/[0.06]">
+                  <svg className="w-4 h-4 text-brand-navy dark:text-brand-teal" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                  </svg>
+                  <span className="font-body text-sm text-slate-600 dark:text-white/60">
+                    {totalDrawn} rue(s){currentLine.length > 0 ? ' + 1 en cours' : ''}
+                  </span>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -529,7 +660,7 @@ export default function ManagerMap({
                 <button onClick={undoStreet} className={btnGhost}>{t('undo_street')}</button>
                 <button
                   onClick={saveZone}
-                  disabled={saving || (drawnStreets.length === 0 && currentLine.length < 2)}
+                  disabled={saving || (drawnStreets.length === 0 && currentLine.length < 2 && !aiPreview?.length)}
                   className={cn(btnSave, 'col-span-1')}
                 >
                   {saving ? '...' : t('finish')}
