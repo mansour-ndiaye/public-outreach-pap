@@ -89,11 +89,12 @@ export function AdminShell({ children, user, locale }: AdminShellProps) {
   const displayName = user.full_name || user.email.split('@')[0]
 
   const navItems = [
-    { key: 'dashboard',   href: `/${locale}/admin/dashboard`,   Icon: IconDashboard },
-    { key: 'users',       href: `/${locale}/admin/users`,        Icon: IconUsers     },
-    { key: 'territories', href: `/${locale}/admin/territories`,  Icon: IconMap       },
-    { key: 'teams',       href: `/${locale}/admin/teams`,        Icon: IconTeams     },
-    { key: 'settings',    href: `/${locale}/admin/settings`,     Icon: IconSettings  },
+    { key: 'dashboard',         href: `/${locale}/admin/dashboard`,   Icon: IconDashboard },
+    { key: 'users',             href: `/${locale}/admin/users`,        Icon: IconUsers     },
+    { key: 'territories',       href: `/${locale}/admin/territories`,  Icon: IconMap       },
+    { key: 'teams',             href: `/${locale}/admin/teams`,        Icon: IconTeams     },
+    { key: 'manager_dashboard', href: `/${locale}/manager/dashboard`,  Icon: IconMap       },
+    { key: 'settings',          href: `/${locale}/admin/settings`,     Icon: IconSettings  },
   ] as const
 
   const handleLogout = async () => {

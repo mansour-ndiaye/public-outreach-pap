@@ -37,6 +37,7 @@ interface ManagerDashboardProps {
   zoneStatuses:   TeamZoneStatus[]
   recentEODs:     EODWithTeam[]
   todayDate:      string
+  locale?:        string
 }
 
 function formatDate(dateStr: string) {
@@ -50,7 +51,7 @@ function formatCurrency(n: number) {
 }
 
 export default function ManagerDashboard({
-  territories, teams, zones, zoneStatuses, recentEODs, todayDate,
+  territories, teams, zones, zoneStatuses, recentEODs, todayDate, locale,
 }: ManagerDashboardProps) {
   const t     = useTranslations('manager')
   const [tab, setTab] = useState<Tab>('map')
@@ -122,6 +123,7 @@ export default function ManagerDashboard({
             zones={zones}
             todayDate={todayDate}
             teamColorMap={teamColorMap}
+            locale={locale}
           />
         )}
 

@@ -15,6 +15,7 @@ import Map, {
 import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
+import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import type { TerritoryRow, TeamRow } from '@/types'
 import { SaveTerritoryModal } from './SaveTerritoryModal'
 import { DeleteTerritoryModal } from './DeleteTerritoryModal'
@@ -172,9 +173,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
   const clickTimer = useRef<ReturnType<typeof setTimeout>>()
   const lastClickMs = useRef(0)
 
-  const mapStyle = resolvedTheme === 'dark'
-    ? 'mapbox://styles/mapbox/dark-v11'
-    : 'mapbox://styles/mapbox/streets-v12'
+  const [mapStyleUrl, setMapStyle] = useMapStyle(resolvedTheme)
 
   // ── Detect touch device ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -491,7 +490,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
           mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
           initialViewState={{ longitude: MONTREAL[0], latitude: MONTREAL[1], zoom: 11 }}
           style={{ width: '100%', height: '100%' }}
-          mapStyle={mapStyle}
+          mapStyle={mapStyleUrl}
           interactiveLayerIds={drawMode === 'idle' ? ['territories-fill'] : []}
           onClick={onMapClick}
           onDblClick={onMapDblClick}
@@ -786,6 +785,15 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
             </svg>
             <p className="font-body text-xs">{t('map_lock_hint')}</p>
           </div>
+        )}
+
+        {/* ── Map style selector ────────────────────────────────────────────── */}
+        {!isDrawing && (
+          <MapStyleSelector
+            activeUrl={mapStyleUrl}
+            onSelect={setMapStyle}
+            className="bottom-10 right-14"
+          />
         )}
 
         {/* ── Legend ────────────────────────────────────────────────────────── */}

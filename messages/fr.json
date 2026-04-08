@@ -80,6 +80,9 @@
       "zone_error": "Impossible d'assigner la zone",
       "no_streets": "Tracez au moins une rue",
       "no_team": "Sélectionnez une équipe",
+      "map_lock_activate": "Activer la carte",
+      "map_lock_lock": "Verrouiller",
+      "map_lock_hint": "Touchez pour activer la carte",
       "legend_territories": "Terrains",
       "legend_today": "Zones aujourd'hui",
       "legend_past": "Zones précédentes",
@@ -188,6 +191,7 @@
       "users": "Utilisateurs",
       "territories": "Terrains",
       "teams": "Équipes",
+      "manager_dashboard": "Tableau gestionnaire",
       "settings": "Paramètres",
       "logout": "Déconnexion"
     },

@@ -9,6 +9,7 @@ import Map, {
 import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
+import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import { submitEOD } from '@/lib/supabase/eod-actions'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneRow } from '@/lib/supabase/zone-actions'
@@ -119,9 +120,7 @@ export default function SupervisorDashboard({
   // ── History expand ─────────────────────────────────────────────────────────
   const [expandedEOD, setExpandedEOD]  = useState<string | null>(null)
 
-  const mapStyle = resolvedTheme === 'dark'
-    ? 'mapbox://styles/mapbox/dark-v11'
-    : 'mapbox://styles/mapbox/streets-v12'
+  const [mapStyleUrl, setMapStyle] = useMapStyle(resolvedTheme)
 
   // Map center — use territory centroid or Montreal
   const mapCenter = useMemo((): [number, number] => {
@@ -397,13 +396,13 @@ export default function SupervisorDashboard({
         )}
 
         {/* Map container */}
-        <div className="rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/[0.07] shadow-card" style={{ height: 380 }}>
+        <div className="relative rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/[0.07] shadow-card" style={{ height: 380 }}>
           <Map
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}
             initialViewState={{ longitude: mapCenter[0], latitude: mapCenter[1], zoom: 13 }}
             style={{ width: '100%', height: '100%' }}
-            mapStyle={mapStyle}
+            mapStyle={mapStyleUrl}
             cursor={cursor}
             onClick={handleMapClick}
           >
@@ -430,6 +429,13 @@ export default function SupervisorDashboard({
               <Layer id="covered-line" type="line" paint={{ 'line-color': '#E8174B', 'line-width': 3.5, 'line-opacity': 0.9 }} />
             </Source>
           </Map>
+
+          {/* Map style selector (inside map container) */}
+          <MapStyleSelector
+            activeUrl={mapStyleUrl}
+            onSelect={setMapStyle}
+            className="bottom-3 right-3"
+          />
         </div>
 
         {/* Legend */}

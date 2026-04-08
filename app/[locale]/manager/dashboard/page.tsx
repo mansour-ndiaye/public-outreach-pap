@@ -16,7 +16,7 @@ async function fetchTeams() {
   return (data ?? []) as { id: string; name: string }[]
 }
 
-export default async function ManagerDashboardPage({ params: { locale: _locale } }: Props) {
+export default async function ManagerDashboardPage({ params: { locale } }: Props) {
   const today = new Date().toISOString().split('T')[0]
 
   const [territories, teams, zones, zoneStatuses, recentEODs] = await Promise.all([
@@ -36,6 +36,7 @@ export default async function ManagerDashboardPage({ params: { locale: _locale }
         zoneStatuses={zoneStatuses}
         recentEODs={recentEODs}
         todayDate={today}
+        locale={locale}
       />
     </div>
   )

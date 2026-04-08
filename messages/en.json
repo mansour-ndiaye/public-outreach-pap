@@ -80,6 +80,9 @@
       "zone_error": "Failed to assign zone",
       "no_streets": "Draw at least one street",
       "no_team": "Select a team first",
+      "map_lock_activate": "Activate map",
+      "map_lock_lock": "Lock map",
+      "map_lock_hint": "Tap to activate map",
       "legend_territories": "Territories",
       "legend_today": "Today's zones",
       "legend_past": "Past zones",
@@ -188,6 +191,7 @@
       "users": "Users",
       "territories": "Territories",
       "teams": "Teams",
+      "manager_dashboard": "Manager Dashboard",
       "settings": "Settings",
       "logout": "Log out"
     },
