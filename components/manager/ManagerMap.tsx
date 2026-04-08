@@ -7,10 +7,10 @@ import Map, {
 import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
-import { createDailyZone } from '@/lib/supabase/zone-actions'
+import { createDailyZone, fetchSupervisorsForTeam } from '@/lib/supabase/zone-actions'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import type { TerritoryRow } from '@/types'
-import type { DailyZoneWithTeam } from '@/lib/supabase/zone-actions'
+import type { DailyZoneWithTeam, SupervisorOption } from '@/lib/supabase/zone-actions'
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 const MONTREAL: [number, number] = [-73.5673, 45.5017]
@@ -133,9 +133,12 @@ export default function ManagerMap({
   const [cursor,      setCursor]      = useState<string>('grab')
 
   // Assignment form
-  const [formTeamId, setFormTeamId] = useState('')
-  const [formDate,   setFormDate]   = useState(todayDate)
-  const [formNote,   setFormNote]   = useState('')
+  const [formTeamId,       setFormTeamId]       = useState('')
+  const [formSupervisorId, setFormSupervisorId] = useState('')
+  const [formDate,         setFormDate]         = useState(todayDate)
+  const [formNote,         setFormNote]         = useState('')
+  const [supervisors,      setSupervisors]      = useState<SupervisorOption[]>([])
+  const [loadingSups,      setLoadingSups]      = useState(false)
 
   // Manual drawing state
   const [currentLine,  setCurrentLine]  = useState<[number, number][]>([])
@@ -175,6 +178,17 @@ export default function ManagerMap({
       map.touchZoomRotate.enable()
     }
   }, [mapLocked, isTouch, mapLoaded, drawMode])
+
+  // Load supervisors when team selection changes
+  useEffect(() => {
+    if (!formTeamId) { setSupervisors([]); setFormSupervisorId(''); return }
+    setLoadingSups(true)
+    setFormSupervisorId('')
+    fetchSupervisorsForTeam(formTeamId).then(sups => {
+      setSupervisors(sups)
+      setLoadingSups(false)
+    })
+  }, [formTeamId])
 
   const territoriesGeoJSON = useMemo(() => buildTerritoriesGeoJSON(territories), [territories])
 
@@ -221,6 +235,8 @@ export default function ManagerMap({
     setCurrentLine([])
     setDrawnStreets([])
     setFormTeamId('')
+    setFormSupervisorId('')
+    setSupervisors([])
     setFormNote('')
     setFormDate(todayDate)
     setSaveError('')
@@ -231,8 +247,23 @@ export default function ManagerMap({
     setIsRecording(false)
   }
 
+  // After saving, reset drawing state so Alicia can draw another zone
+  // for the same supervisor without closing the panel
+  const resetForAnotherZone = () => {
+    setDrawMode('idle')
+    setCurrentLine([])
+    setDrawnStreets([])
+    setAiInput('')
+    setAiPreview(null)
+    setAiError('')
+    setSaveSuccess(false)
+    setSaveError('')
+    // keep formTeamId, formSupervisorId, formDate, formNote
+  }
+
   const startDrawing = () => {
-    if (!formTeamId) { setSaveError(t('no_team')); return }
+    if (!formTeamId) { setSaveError(locale !== 'en' ? 'Sélectionnez une équipe' : 'Select a team'); return }
+    if (!formSupervisorId) { setSaveError(locale !== 'en' ? 'Sélectionnez un superviseur' : 'Select a supervisor'); return }
     setSaveError('')
     setCurrentLine([])
     setDrawnStreets([])
@@ -367,11 +398,18 @@ export default function ManagerMap({
     setSaving(true)
     setSaveError('')
     const fc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: allStreets }
-    const result = await createDailyZone({ team_id: formTeamId, date: formDate, streets: fc, note: formNote })
+    const result = await createDailyZone({
+      team_id:       formTeamId,
+      supervisor_id: formSupervisorId || null,
+      date:          formDate,
+      streets:       fc,
+      note:          formNote,
+    })
     setSaving(false)
 
     if (result.error) setSaveError(result.error)
-    else { setSaveSuccess(true); setTimeout(closePanel, 1500) }
+    else setSaveSuccess(true)
+    // Don't auto-close — let Alicia assign another zone or close manually
   }
 
   // ── Labels ────────────────────────────────────────────────────────────────────
@@ -381,7 +419,7 @@ export default function ManagerMap({
   [territories])
 
   const todayZoneLabels = useMemo(() => {
-    const labels: { teamName: string; center: [number, number]; color: string }[] = []
+    const labels: { label: string; center: [number, number]; color: string }[] = []
     for (const zone of zones.filter(z => z.date === todayDate)) {
       const fc = zone.streets as GeoJSON.FeatureCollection
       if (!fc?.features?.length) continue
@@ -390,7 +428,12 @@ export default function ManagerMap({
       const coords = (firstLine.geometry as GeoJSON.LineString).coordinates
       if (coords.length < 2) continue
       const mid = Math.floor(coords.length / 2)
-      labels.push({ teamName: zone.team_name, center: [coords[mid][0], coords[mid][1]], color: getColor(teamColorMap, zone.team_id) })
+      const supSuffix = zone.supervisor_name ? ` — ${zone.supervisor_name}` : ''
+      labels.push({
+        label:  zone.team_name + supSuffix,
+        center: [coords[mid][0], coords[mid][1]],
+        color:  getColor(teamColorMap, zone.team_id),
+      })
     }
     return labels
   }, [zones, todayDate, teamColorMap])
@@ -437,7 +480,7 @@ export default function ManagerMap({
         {todayZoneLabels.map((lbl, i) => (
           <Marker key={i} longitude={lbl.center[0]} latitude={lbl.center[1]} anchor="center">
             <div className="px-2 py-0.5 rounded-full text-[10px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap" style={{ backgroundColor: lbl.color }}>
-              {lbl.teamName}
+              {lbl.label}
             </div>
           </Marker>
         ))}
@@ -604,7 +647,7 @@ export default function ManagerMap({
             {t('finish_street')}
           </button>
 
-          {/* Thin bar at bottom — team name + save */}
+          {/* Thin bar at bottom — team + supervisor name + save */}
           <div className={cn(
             'absolute inset-x-0 bottom-0 z-30',
             'flex items-center justify-between px-4 gap-3',
@@ -615,10 +658,10 @@ export default function ManagerMap({
               <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: getColor(teamColorMap, formTeamId) }} />
               <div className="min-w-0">
                 <p className="font-body text-[10px] text-slate-400 dark:text-white/40 uppercase tracking-wide leading-none mb-0.5">
-                  {t('team')}
+                  {teams.find(tm => tm.id === formTeamId)?.name ?? '—'}
                 </p>
                 <p className="font-body text-sm font-semibold text-brand-navy dark:text-white truncate">
-                  {teams.find(tm => tm.id === formTeamId)?.name ?? '—'}
+                  {supervisors.find(s => s.id === formSupervisorId)?.full_name ?? supervisors.find(s => s.id === formSupervisorId)?.email ?? '—'}
                 </p>
               </div>
             </div>
@@ -704,6 +747,23 @@ export default function ManagerMap({
                 ))}
               </select>
             </div>
+            {/* Supervisor */}
+            <div>
+              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                {locale !== 'en' ? 'Superviseur' : 'Supervisor'} <span className="text-brand-red">*</span>
+              </label>
+              <select
+                value={formSupervisorId}
+                onChange={e => setFormSupervisorId(e.target.value)}
+                disabled={!formTeamId || loadingSups}
+                className={inputCls}
+              >
+                <option value="">{loadingSups ? '...' : (locale !== 'en' ? 'Sélectionnez un superviseur' : 'Select a supervisor')}</option>
+                {supervisors.map(s => (
+                  <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
+                ))}
+              </select>
+            </div>
             {/* Date */}
             <div>
               <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
@@ -722,13 +782,33 @@ export default function ManagerMap({
 
           {/* Footer */}
           <div className="px-5 py-4 border-t border-slate-200/60 dark:border-white/[0.07] space-y-2 shrink-0">
-            <button onClick={startDrawing} className={cn(btnPrimary, 'min-h-[48px]')}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-              </svg>
-              {t('start_drawing')}
-            </button>
-            <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
+            {saveSuccess ? (
+              <>
+                <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  {t('zone_saved')}
+                </div>
+                <button onClick={resetForAnotherZone} className={cn(btnPrimary, 'min-h-[48px]')}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  {locale !== 'en' ? 'Assigner une autre zone' : 'Assign another zone'}
+                </button>
+                <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
+              </>
+            ) : (
+              <>
+                <button onClick={startDrawing} className={cn(btnPrimary, 'min-h-[48px]')}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                  {t('start_drawing')}
+                </button>
+                <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -796,10 +876,30 @@ export default function ManagerMap({
               <div className="flex items-center gap-2 mt-2">
                 <div className="w-4 h-4 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: getColor(teamColorMap, formTeamId) }} />
                 <span className="font-body text-xs text-slate-500 dark:text-white/50">
-                  {teams.find(t => t.id === formTeamId)?.name}
+                  {teams.find(tm => tm.id === formTeamId)?.name}
                 </span>
               </div>
             )}
+          </div>
+
+          {/* Supervisor selector */}
+          <div>
+            <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+              {locale !== 'en' ? 'Superviseur' : 'Supervisor'} <span className="text-brand-red">*</span>
+            </label>
+            <select
+              value={formSupervisorId}
+              onChange={e => setFormSupervisorId(e.target.value)}
+              disabled={drawMode === 'drawing' || !formTeamId || loadingSups}
+              className={inputCls}
+            >
+              <option value="">
+                {loadingSups ? '...' : (locale !== 'en' ? 'Sélectionnez un superviseur' : 'Select a supervisor')}
+              </option>
+              {supervisors.map(s => (
+                <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
+              ))}
+            </select>
           </div>
 
           {/* Date */}
@@ -919,7 +1019,23 @@ export default function ManagerMap({
 
         {/* Panel footer */}
         <div className="px-5 py-4 border-t border-slate-200/60 dark:border-white/[0.07] space-y-2">
-          {drawMode === 'idle' ? (
+          {saveSuccess && drawMode === 'idle' ? (
+            <>
+              <div className="rounded-xl px-3 py-2.5 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                {t('zone_saved')}
+              </div>
+              <button onClick={resetForAnotherZone} className={btnPrimary}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                {locale !== 'en' ? 'Assigner une autre zone' : 'Assign another zone'}
+              </button>
+              <button onClick={closePanel} className={btnGhost}>{t('cancel')}</button>
+            </>
+          ) : drawMode === 'idle' ? (
             <>
               <button onClick={startDrawing} className={btnPrimary}>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">

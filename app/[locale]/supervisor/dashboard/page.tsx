@@ -2,15 +2,23 @@ import nextDynamic from 'next/dynamic'
 import {
   fetchSupervisorTeam,
   fetchSupervisorTerritory,
-  fetchTodayZone,
+  fetchTodayZones,
+  fetchTeamZonesToday,
   fetchTodayEOD,
   fetchEODHistory,
   fetchPastCoveredStreets,
 } from '@/lib/supabase/eod-actions'
 import { getCurrentUser } from '@/lib/supabase/actions'
+import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
+
+// Team color palette (must match ManagerDashboard)
+const TEAM_COLORS = [
+  '#E8174B', '#00B5A3', '#FF8C00', '#8B5CF6',
+  '#F59E0B', '#10B981', '#3B82F6', '#EC4899',
+]
 
 // Load supervisor dashboard without SSR (contains Mapbox map)
 const SupervisorDashboard = nextDynamic(
@@ -30,6 +38,22 @@ const SupervisorDashboard = nextDynamic(
 
 interface Props {
   params: { locale: string }
+}
+
+async function fetchSupervisorName(userId: string): Promise<string> {
+  const supabase = createClient()
+  const { data } = await supabase
+    .from('users')
+    .select('full_name, email')
+    .eq('id', userId)
+    .single() as { data: { full_name: string | null; email: string } | null; error: unknown }
+  return data?.full_name || data?.email || ''
+}
+
+async function fetchAllTeams(): Promise<{ id: string; name: string }[]> {
+  const supabase = createClient()
+  const { data } = await supabase.from('teams').select('id, name').order('name')
+  return (data ?? []) as { id: string; name: string }[]
 }
 
 export default async function SupervisorDashboardPage({ params: { locale } }: Props) {
@@ -56,24 +80,40 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
     )
   }
 
-  const [territory, todayZone, todayEOD, eodHistory, pastStreets] = await Promise.all([
+  const [
+    territory, todayZones, teamZones, todayEOD,
+    eodHistory, pastStreets, supervisorName, allTeams,
+  ] = await Promise.all([
     fetchSupervisorTerritory(team.teamId),
-    fetchTodayZone(team.teamId, today),
-    fetchTodayEOD(team.teamId, today),
-    fetchEODHistory(team.teamId),
-    fetchPastCoveredStreets(team.teamId),
+    fetchTodayZones(user.id, today),
+    fetchTeamZonesToday(team.teamId, today),
+    fetchTodayEOD(user.id, today),
+    fetchEODHistory(user.id),
+    fetchPastCoveredStreets(user.id),
+    fetchSupervisorName(user.id),
+    fetchAllTeams(),
   ])
+
+  // Assign a stable team color based on sorted team list
+  const sortedTeams = allTeams.sort((a, b) => a.name.localeCompare(b.name))
+  const teamIdx = sortedTeams.findIndex(t => t.id === team.teamId)
+  const teamColor = TEAM_COLORS[teamIdx % TEAM_COLORS.length] ?? '#94a3b8'
 
   return (
     <SupervisorDashboard
       teamId={team.teamId}
       teamName={team.teamName}
+      supervisorId={user.id}
+      supervisorName={supervisorName}
       territory={territory}
-      todayZone={todayZone}
+      todayZones={todayZones}
+      teamZones={teamZones}
       todayEOD={todayEOD}
       eodHistory={eodHistory}
       pastStreets={pastStreets}
       todayDate={today}
+      teamColor={teamColor}
+      locale={locale}
     />
   )
 }

@@ -4,28 +4,43 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 
 export type DailyZoneRow = {
-  id:          string
-  team_id:     string
-  assigned_by: string
-  date:        string
-  streets:     GeoJSON.FeatureCollection
-  note:        string | null
-  created_at:  string
+  id:            string
+  team_id:       string
+  supervisor_id: string | null
+  assigned_by:   string
+  date:          string
+  streets:       GeoJSON.FeatureCollection
+  note:          string | null
+  created_at:    string
 }
 
 export type DailyZoneWithTeam = DailyZoneRow & {
-  team_name: string
+  team_name:       string
+  supervisor_name: string | null
+}
+
+export type SupervisorOption = {
+  id:        string
+  full_name: string | null
+  email:     string
 }
 
 export type TeamZoneStatus = {
-  team_id:       string
-  team_name:     string
-  manager_name:  string | null
+  team_id:        string
+  team_name:      string
+  manager_name:   string | null
   territory_name: string | null
-  zone_assigned:  boolean
-  zone_id:       string | null
-  last_eod_date: string | null
-  last_pph:      number | null
+  // Per-supervisor breakdown
+  supervisors:    SupervisorZoneStatus[]
+}
+
+export type SupervisorZoneStatus = {
+  supervisor_id:   string
+  supervisor_name: string
+  zone_assigned:   boolean
+  zone_id:         string | null
+  last_eod_date:   string | null
+  last_pph:        number | null
 }
 
 // ── Fetch all daily zones (for manager map) ───────────────────────────────────
@@ -41,7 +56,7 @@ export async function fetchDailyZones(date?: string): Promise<DailyZoneWithTeam[
   const rawZones = zones as DailyZoneRow[]
 
   // Resolve team names
-  const teamIds = rawZones.map(z => z.team_id).filter((id, i, arr) => arr.indexOf(id) === i)
+  const teamIds = Array.from(new Set(rawZones.map(z => z.team_id)))
   const { data: teams } = await supabase
     .from('teams')
     .select('id, name')
@@ -52,32 +67,74 @@ export async function fetchDailyZones(date?: string): Promise<DailyZoneWithTeam[
     teamNames.set(t.id, t.name)
   }
 
+  // Resolve supervisor names
+  const supervisorIds = rawZones.map(z => z.supervisor_id).filter(Boolean) as string[]
+  const uniqueSupIds = Array.from(new Set(supervisorIds))
+  const supervisorNames = new Map<string, string>()
+  if (uniqueSupIds.length > 0) {
+    const { data: sups } = await supabase
+      .from('users')
+      .select('id, full_name, email')
+      .in('id', uniqueSupIds)
+    for (const s of (sups ?? []) as { id: string; full_name: string | null; email: string }[]) {
+      supervisorNames.set(s.id, s.full_name || s.email)
+    }
+  }
+
   return rawZones.map(z => ({
     ...z,
-    team_name: teamNames.get(z.team_id) ?? z.team_id,
+    team_name:       teamNames.get(z.team_id) ?? z.team_id,
+    supervisor_name: z.supervisor_id ? (supervisorNames.get(z.supervisor_id) ?? null) : null,
   }))
 }
 
-// ── Fetch teams with today's zone status (for manager Teams tab) ──────────────
+// ── Fetch supervisors belonging to a team ─────────────────────────────────────
+export async function fetchSupervisorsForTeam(teamId: string): Promise<SupervisorOption[]> {
+  const supabase = createClient()
+
+  const { data: members } = await supabase
+    .from('team_members')
+    .select('user_id')
+    .eq('team_id', teamId)
+
+  if (!members || members.length === 0) return []
+
+  const memberIds = (members as { user_id: string }[]).map(m => m.user_id)
+
+  const { data: users } = await supabase
+    .from('users')
+    .select('id, full_name, email')
+    .in('id', memberIds)
+    .in('role', ['supervisor'])
+    .order('full_name')
+
+  return (users ?? []) as SupervisorOption[]
+}
+
+// ── Fetch teams with per-supervisor zone status (for manager Teams tab) ────────
 export async function fetchTeamsWithZoneStatus(date: string): Promise<TeamZoneStatus[]> {
   const supabase = createClient()
 
   const [teamsRes, zonesRes, territoriesRes, membersRes, eodRes] = await Promise.all([
     supabase.from('teams').select('id, name, manager_id').order('name'),
-    supabase.from('daily_zones').select('id, team_id, date').eq('date', date),
+    supabase.from('daily_zones').select('id, team_id, supervisor_id, date').eq('date', date),
     supabase.from('team_territories').select('team_id, territory_id'),
     supabase.from('team_members').select('team_id, user_id'),
-    supabase.from('daily_entries').select('team_id, entry_date, pph').not('team_id', 'is', null).order('entry_date', { ascending: false }),
+    supabase.from('daily_entries')
+      .select('supervisor_id, team_id, entry_date, pph')
+      .not('entry_date', 'is', null)
+      .order('entry_date', { ascending: false }),
   ])
 
   const teams       = (teamsRes.data ?? [])       as { id: string; name: string; manager_id: string | null }[]
-  const zones       = (zonesRes.data ?? [])       as { id: string; team_id: string; date: string }[]
+  const zones       = (zonesRes.data ?? [])       as { id: string; team_id: string; supervisor_id: string | null; date: string }[]
   const territories = (territoriesRes.data ?? []) as { team_id: string; territory_id: string }[]
-  const entries     = (eodRes.data ?? [])         as { team_id: string; entry_date: string; pph: number }[]
+  const members     = (membersRes.data ?? [])     as { team_id: string; user_id: string }[]
+  const entries     = (eodRes.data ?? [])         as { supervisor_id: string | null; team_id: string | null; entry_date: string; pph: number }[]
 
   // Resolve territory names
-  const allTerritoryIds = territories.map(t => t.territory_id).filter((id, i, arr) => arr.indexOf(id) === i)
-  let territoryNames = new Map<string, string>()
+  const allTerritoryIds = Array.from(new Set(territories.map(t => t.territory_id)))
+  const territoryNames  = new Map<string, string>()
   if (allTerritoryIds.length > 0) {
     const { data: terrs } = await supabase.from('territories').select('id, name').in('id', allTerritoryIds)
     for (const tr of (terrs ?? []) as { id: string; name: string }[]) {
@@ -85,56 +142,92 @@ export async function fetchTeamsWithZoneStatus(date: string): Promise<TeamZoneSt
     }
   }
 
-  // Resolve manager names
-  const managerIds = teams.map(t => t.manager_id).filter(Boolean) as string[]
-  const uniqueManagerIds = managerIds.filter((id, i, arr) => arr.indexOf(id) === i)
-  let managerNames = new Map<string, string>()
-  if (uniqueManagerIds.length > 0) {
-    const { data: mgrs } = await supabase.from('users').select('id, full_name, email').in('id', uniqueManagerIds)
-    for (const m of (mgrs ?? []) as { id: string; full_name: string | null; email: string }[]) {
-      managerNames.set(m.id, m.full_name || m.email)
+  // Resolve manager names + all supervisor names
+  const allUserIds = [
+    ...teams.map(t => t.manager_id).filter(Boolean) as string[],
+    ...members.map(m => m.user_id),
+  ]
+  const uniqueUserIds = Array.from(new Set(allUserIds))
+  const userNames = new Map<string, string>()
+  if (uniqueUserIds.length > 0) {
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, full_name, email, role')
+      .in('id', uniqueUserIds)
+    for (const u of (users ?? []) as { id: string; full_name: string | null; email: string; role: string }[]) {
+      userNames.set(u.id, u.full_name || u.email)
+    }
+    // Keep only supervisors in a separate set for filtering
+    for (const u of (users ?? []) as { id: string; full_name: string | null; email: string; role: string }[]) {
+      if (u.role !== 'supervisor') continue
     }
   }
 
-  // Build lookup maps
-  const zoneByTeam = new Map<string, string>()
-  for (const z of zones) zoneByTeam.set(z.team_id, z.id)
-
+  // Build lookup structures
   const territoryByTeam = new Map<string, string>()
   for (const t of territories) {
     if (!territoryByTeam.has(t.team_id)) territoryByTeam.set(t.team_id, t.territory_id)
   }
 
-  // Last EOD per team
-  const lastEodByTeam = new Map<string, { date: string; pph: number }>()
+  // zones by (team_id, supervisor_id)
+  const zoneKeyMap = new Map<string, string>()  // key: `${teamId}:${supId}` → zone id
+  for (const z of zones) {
+    const key = `${z.team_id}:${z.supervisor_id ?? ''}`
+    if (!zoneKeyMap.has(key)) zoneKeyMap.set(key, z.id)
+  }
+
+  // Last EOD per supervisor
+  const lastEodBySup = new Map<string, { date: string; pph: number }>()
   for (const e of entries) {
-    if (!lastEodByTeam.has(e.team_id)) {
-      lastEodByTeam.set(e.team_id, { date: e.entry_date, pph: e.pph })
+    const key = e.supervisor_id ?? ''
+    if (key && !lastEodBySup.has(key)) {
+      lastEodBySup.set(key, { date: e.entry_date, pph: e.pph })
     }
+  }
+
+  // Supervisors per team (only role=supervisor from team_members)
+  const supervisorsByTeam = new Map<string, string[]>()
+  for (const m of members) {
+    const arr = supervisorsByTeam.get(m.team_id) ?? []
+    arr.push(m.user_id)
+    supervisorsByTeam.set(m.team_id, arr)
   }
 
   return teams.map(team => {
     const territoryId = territoryByTeam.get(team.id)
-    const lastEod = lastEodByTeam.get(team.id)
+    const teamSupervisorIds = supervisorsByTeam.get(team.id) ?? []
+
+    const supervisors: SupervisorZoneStatus[] = teamSupervisorIds.map(supId => {
+      const key = `${team.id}:${supId}`
+      const zoneId = zoneKeyMap.get(key) ?? null
+      const lastEod = lastEodBySup.get(supId)
+      return {
+        supervisor_id:   supId,
+        supervisor_name: userNames.get(supId) ?? supId,
+        zone_assigned:   zoneId !== null,
+        zone_id:         zoneId,
+        last_eod_date:   lastEod?.date ?? null,
+        last_pph:        lastEod?.pph ?? null,
+      }
+    })
+
     return {
       team_id:        team.id,
       team_name:      team.name,
-      manager_name:   team.manager_id ? (managerNames.get(team.manager_id) ?? null) : null,
+      manager_name:   team.manager_id ? (userNames.get(team.manager_id) ?? null) : null,
       territory_name: territoryId ? (territoryNames.get(territoryId) ?? null) : null,
-      zone_assigned:  zoneByTeam.has(team.id),
-      zone_id:        zoneByTeam.get(team.id) ?? null,
-      last_eod_date:  lastEod?.date ?? null,
-      last_pph:       lastEod?.pph ?? null,
+      supervisors,
     }
   })
 }
 
-// ── Create / upsert a daily zone ──────────────────────────────────────────────
+// ── Create a daily zone (insert, not upsert — multiple zones allowed) ─────────
 export async function createDailyZone(data: {
-  team_id:  string
-  date:     string
-  streets:  GeoJSON.FeatureCollection
-  note:     string
+  team_id:       string
+  supervisor_id: string | null
+  date:          string
+  streets:       GeoJSON.FeatureCollection
+  note:          string
 }): Promise<{ id?: string; error?: string }> {
   const supabase = createClient()
 
@@ -144,16 +237,14 @@ export async function createDailyZone(data: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: zone, error } = await (supabase as any)
     .from('daily_zones')
-    .upsert(
-      {
-        team_id:     data.team_id,
-        assigned_by: user.user.id,
-        date:        data.date,
-        streets:     data.streets,
-        note:        data.note || null,
-      },
-      { onConflict: 'team_id,date' }
-    )
+    .insert({
+      team_id:       data.team_id,
+      supervisor_id: data.supervisor_id || null,
+      assigned_by:   user.user.id,
+      date:          data.date,
+      streets:       data.streets,
+      note:          data.note || null,
+    })
     .select()
     .single() as { data: { id: string } | null; error: { message: string } | null }
 

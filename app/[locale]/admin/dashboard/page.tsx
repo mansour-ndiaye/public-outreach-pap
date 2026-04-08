@@ -53,19 +53,28 @@ async function fetchStats() {
     { count: userCount },
     { count: territoryCount },
     { count: teamCount },
-    { count: assignmentCount },
+    { data: todayEODs },
   ] = await Promise.all([
     supabase.from('users').select('*', { count: 'exact', head: true }),
     supabase.from('territories').select('*', { count: 'exact', head: true }),
     supabase.from('teams').select('*', { count: 'exact', head: true }),
-    supabase.from('assignments').select('*', { count: 'exact', head: true }).eq('date', today),
+    // Count unique supervisors who submitted an EOD today
+    supabase
+      .from('daily_entries')
+      .select('supervisor_id')
+      .eq('entry_date', today)
+      .not('supervisor_id', 'is', null),
   ])
 
+  const uniqueSupervisorsToday = new Set(
+    (todayEODs ?? []).map((e: { supervisor_id: string }) => e.supervisor_id)
+  ).size
+
   return {
-    users:      userCount      ?? 0,
-    territories: territoryCount ?? 0,
-    teams:      teamCount      ?? 0,
-    assignmentsToday: assignmentCount ?? 0,
+    users:               userCount       ?? 0,
+    territories:         territoryCount  ?? 0,
+    teams:               teamCount       ?? 0,
+    supervisorsToday:    uniqueSupervisorsToday,
   }
 }
 
@@ -111,7 +120,7 @@ export default async function AdminDashboardPage({ params: { locale } }: Props) 
         />
         <StatsCard
           label={t('stats.assignments_today')}
-          value={stats.assignmentsToday}
+          value={stats.supervisorsToday}
           icon={<IconCalendar />}
           accent="slate"
         />

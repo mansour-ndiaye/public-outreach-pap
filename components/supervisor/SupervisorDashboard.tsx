@@ -15,6 +15,8 @@ import type { TerritoryRow } from '@/types'
 import type { DailyZoneRow } from '@/lib/supabase/zone-actions'
 import type { EODEntry } from '@/lib/supabase/eod-actions'
 
+const TEAM_COLOR_FALLBACK = '#E8174B'
+
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 const MONTREAL: [number, number] = [-73.5673, 45.5017]
 
@@ -71,19 +73,25 @@ type SpeechRecognitionType = {
 }
 
 interface SupervisorDashboardProps {
-  teamId:        string
-  teamName:      string
-  territory:     TerritoryRow | null
-  todayZone:     DailyZoneRow | null
-  todayEOD:      EODEntry | null
-  eodHistory:    EODEntry[]
-  pastStreets:   GeoJSON.FeatureCollection
-  todayDate:     string
+  teamId:         string
+  teamName:       string
+  supervisorId:   string
+  supervisorName: string
+  territory:      TerritoryRow | null
+  todayZones:     DailyZoneRow[]          // all zones for this supervisor today
+  teamZones:      DailyZoneRow[]          // all zones for the team today (incl. other supervisors)
+  todayEOD:       EODEntry | null
+  eodHistory:     EODEntry[]
+  pastStreets:    GeoJSON.FeatureCollection
+  todayDate:      string
+  teamColor?:     string
+  locale?:        string
 }
 
 export default function SupervisorDashboard({
-  teamId, teamName, territory, todayZone, todayEOD: initialEOD,
-  eodHistory, pastStreets, todayDate,
+  teamId, teamName, supervisorId, supervisorName,
+  territory, todayZones, teamZones,
+  todayEOD: initialEOD, eodHistory, pastStreets, todayDate, teamColor, locale,
 }: SupervisorDashboardProps) {
   const { resolvedTheme } = useTheme()
   const t   = useTranslations('supervisor')
@@ -147,11 +155,50 @@ export default function SupervisorDashboard({
     }
   }, [territory])
 
-  // Today zone GeoJSON
+  // Today zones GeoJSON — all zones assigned to this supervisor (teal, combined)
   const todayZoneGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
-    if (!todayZone?.streets) return { type: 'FeatureCollection', features: [] }
-    return todayZone.streets as GeoJSON.FeatureCollection
-  }, [todayZone])
+    const allFeatures: GeoJSON.Feature[] = []
+    for (const z of todayZones) {
+      const fc = z.streets as GeoJSON.FeatureCollection
+      if (fc?.features) allFeatures.push(...fc.features)
+    }
+    return { type: 'FeatureCollection', features: allFeatures }
+  }, [todayZones])
+
+  // Other supervisors' zones from same team (team color, thin, 40% opacity)
+  const otherZonesGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
+    const allFeatures: GeoJSON.Feature[] = []
+    for (const z of teamZones) {
+      if (z.supervisor_id === supervisorId) continue  // skip own zones
+      const fc = z.streets as GeoJSON.FeatureCollection
+      if (fc?.features) {
+        for (const f of fc.features) {
+          allFeatures.push({ ...f, properties: { ...f.properties, zone_id: z.id } })
+        }
+      }
+    }
+    return { type: 'FeatureCollection', features: allFeatures }
+  }, [teamZones, supervisorId])
+
+  // Labels for other supervisors' zones
+  const otherZoneLabels = useMemo(() => {
+    const labels: { label: string; center: [number, number] }[] = []
+    // Group by zone_id, pick first line midpoint
+    const seen = new Set<string>()
+    for (const z of teamZones) {
+      if (z.supervisor_id === supervisorId) continue
+      if (seen.has(z.id)) continue
+      seen.add(z.id)
+      const fc = z.streets as GeoJSON.FeatureCollection
+      const firstLine = fc?.features?.find(f => f.geometry.type === 'LineString')
+      if (!firstLine) continue
+      const coords = (firstLine.geometry as GeoJSON.LineString).coordinates
+      if (coords.length < 2) continue
+      const mid = Math.floor(coords.length / 2)
+      labels.push({ label: z.id, center: [coords[mid][0], coords[mid][1]] })
+    }
+    return labels
+  }, [teamZones, supervisorId])
 
   // Covered streets GeoJSON (session)
   const coveredGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
@@ -163,10 +210,10 @@ export default function SupervisorDashboard({
     return { type: 'FeatureCollection', features }
   }, [coveredStreets, currentLine, aiPreview])
 
-  // Progress
+  // Progress — based on ALL zones assigned to this supervisor today
   const progress = useMemo(() => {
-    const assignedFeatures = (todayZoneGeoJSON.features ?? [])
-    const all = [...coveredStreets, ...(submittedEOD?.covered_streets as GeoJSON.FeatureCollection | null)?.features ?? []]
+    const assignedFeatures = todayZoneGeoJSON.features ?? []
+    const all = [...coveredStreets, ...((submittedEOD?.covered_streets as GeoJSON.FeatureCollection | null)?.features ?? [])]
     return computeProgress(all, assignedFeatures)
   }, [coveredStreets, submittedEOD, todayZoneGeoJSON])
 
@@ -326,6 +373,7 @@ export default function SupervisorDashboard({
     startTransition(async () => {
       const result = await submitEOD({
         team_id:          teamId,
+        supervisor_id:    supervisorId,
         entry_date:       todayDate,
         pph:              parseFloat(pph),
         canvas_hours:     parseFloat(canvasHours),
@@ -345,6 +393,7 @@ export default function SupervisorDashboard({
           id: result.id!,
           assignment_id: null,
           team_id: teamId,
+          supervisor_id: supervisorId,
           entry_date: todayDate,
           pph: parseFloat(pph),
           canvas_hours: parseFloat(canvasHours),
@@ -371,7 +420,7 @@ export default function SupervisorDashboard({
           <h2 className="font-display text-lg font-bold text-brand-navy dark:text-white">
             {t('map.title')} — <span className="text-brand-teal">{teamName}</span>
           </h2>
-          {todayZone && (
+          {todayZones.length > 0 && (
             <div className="text-right">
               <div className="font-body text-xs text-slate-500 dark:text-white/40 mb-1">{t('map.progress')}</div>
               <div className="flex items-center gap-2">
@@ -388,18 +437,21 @@ export default function SupervisorDashboard({
         </div>
 
         {/* No zone message */}
-        {!todayZone && (
+        {todayZones.length === 0 && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:border-amber-800/40 dark:bg-amber-900/10 p-5 mb-4 font-body text-sm text-amber-700 dark:text-amber-400">
             {t('map.no_zone')}
           </div>
         )}
 
-        {/* Zone note */}
-        {todayZone?.note && (
-          <div className="rounded-xl border border-brand-navy/20 bg-brand-navy/5 dark:bg-brand-navy/20 px-4 py-3 mb-3 font-body text-sm text-brand-navy dark:text-white/80">
-            <span className="font-semibold">{t('map.today_note')} </span>{todayZone.note}
+        {/* Zone notes — show notes from all assigned zones */}
+        {todayZones.filter(z => z.note).map((z, i) => (
+          <div key={z.id} className="rounded-xl border border-brand-navy/20 bg-brand-navy/5 dark:bg-brand-navy/20 px-4 py-3 mb-3 font-body text-sm text-brand-navy dark:text-white/80">
+            {todayZones.filter(z2 => z2.note).length > 1 && (
+              <span className="font-semibold text-[10px] uppercase tracking-wide text-slate-400 dark:text-white/30 mr-2">Zone {i + 1}</span>
+            )}
+            <span className="font-semibold">{t('map.today_note')} </span>{z.note}
           </div>
-        )}
+        ))}
 
         {/* Map container */}
         <div className="relative rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/[0.07] shadow-card" style={{ height: 380 }}>
@@ -425,7 +477,15 @@ export default function SupervisorDashboard({
               <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#94a3b8', 'line-width': 2, 'line-opacity': 0.4 }} />
             </Source>
 
-            {/* Today assigned zone (teal) */}
+            {/* Other supervisors' zones from same team (team color, thin, 40%) */}
+            <Source id="other-zones" type="geojson" data={otherZonesGeoJSON}>
+              <Layer id="other-zones-line" type="line" paint={{
+                'line-color': teamColor ?? TEAM_COLOR_FALLBACK,
+                'line-width': 2, 'line-opacity': 0.4,
+              }} />
+            </Source>
+
+            {/* Today assigned zone (teal) — this supervisor's zones */}
             <Source id="today-zone" type="geojson" data={todayZoneGeoJSON}>
               <Layer id="today-zone-line" type="line" paint={{ 'line-color': '#00B5A3', 'line-width': 4, 'line-opacity': 0.85 }} />
             </Source>
@@ -434,6 +494,18 @@ export default function SupervisorDashboard({
             <Source id="covered" type="geojson" data={coveredGeoJSON}>
               <Layer id="covered-line" type="line" paint={{ 'line-color': '#E8174B', 'line-width': 3.5, 'line-opacity': 0.9 }} />
             </Source>
+
+            {/* Labels for other supervisors' zones — placeholder, just show zone marker */}
+            {otherZoneLabels.map((lbl, i) => (
+              <Marker key={i} longitude={lbl.center[0]} latitude={lbl.center[1]} anchor="center">
+                <div
+                  className="px-2 py-0.5 rounded-full text-[9px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap opacity-70"
+                  style={{ backgroundColor: teamColor ?? TEAM_COLOR_FALLBACK }}
+                >
+                  {teamName}
+                </div>
+              </Marker>
+            ))}
           </Map>
 
           {/* Map style selector (inside map container) */}
@@ -683,7 +755,9 @@ export default function SupervisorDashboard({
       {/* ── SECTION 3: EOD HISTORY ─────────────────────────────────────────── */}
       <section className="pb-12">
         <h2 className="font-display text-lg font-bold text-brand-navy dark:text-white mb-4">
-          {t('history.title')}
+          {supervisorName
+            ? (locale === 'en' ? `${supervisorName}'s History` : `Historique de ${supervisorName}`)
+            : t('history.title')}
         </h2>
 
         {eodHistory.length === 0 ? (

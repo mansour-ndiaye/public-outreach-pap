@@ -9,6 +9,7 @@ export type EODEntry = {
   id:               string
   assignment_id:    string | null
   team_id:          string | null
+  supervisor_id:    string | null
   entry_date:       string | null
   pac_count:        number
   pac_total_amount: number
@@ -22,7 +23,8 @@ export type EODEntry = {
 }
 
 export type EODWithTeam = EODEntry & {
-  team_name: string | null
+  team_name:       string | null
+  supervisor_name: string | null
 }
 
 export type SupervisorTeam = {
@@ -76,8 +78,22 @@ export async function fetchSupervisorTerritory(teamId: string): Promise<Territor
   return territory
 }
 
-// ── Get today's assigned zone for a team ─────────────────────────────────────
-export async function fetchTodayZone(teamId: string, date: string): Promise<DailyZoneRow | null> {
+// ── Get ALL zones assigned to a specific supervisor today (multiple allowed) ──
+export async function fetchTodayZones(supervisorId: string, date: string): Promise<DailyZoneRow[]> {
+  const supabase = createClient()
+
+  const { data } = await supabase
+    .from('daily_zones')
+    .select('*')
+    .eq('supervisor_id', supervisorId)
+    .eq('date', date)
+    .order('created_at', { ascending: true })
+
+  return (data ?? []) as DailyZoneRow[]
+}
+
+// ── Get all zones for a team today (all supervisors, for map context) ─────────
+export async function fetchTeamZonesToday(teamId: string, date: string): Promise<DailyZoneRow[]> {
   const supabase = createClient()
 
   const { data } = await supabase
@@ -85,33 +101,33 @@ export async function fetchTodayZone(teamId: string, date: string): Promise<Dail
     .select('*')
     .eq('team_id', teamId)
     .eq('date', date)
-    .single() as { data: DailyZoneRow | null; error: unknown }
+    .order('created_at', { ascending: true })
 
-  return data
+  return (data ?? []) as DailyZoneRow[]
 }
 
-// ── Get today's EOD submission for a team ────────────────────────────────────
-export async function fetchTodayEOD(teamId: string, date: string): Promise<EODEntry | null> {
+// ── Get today's EOD submission for a supervisor ───────────────────────────────
+export async function fetchTodayEOD(supervisorId: string, date: string): Promise<EODEntry | null> {
   const supabase = createClient()
 
   const { data } = await supabase
     .from('daily_entries')
     .select('*')
-    .eq('team_id', teamId)
+    .eq('supervisor_id', supervisorId)
     .eq('entry_date', date)
     .single() as { data: EODEntry | null; error: unknown }
 
   return data
 }
 
-// ── Get EOD history for a team ────────────────────────────────────────────────
-export async function fetchEODHistory(teamId: string): Promise<EODEntry[]> {
+// ── Get EOD history for a supervisor ─────────────────────────────────────────
+export async function fetchEODHistory(supervisorId: string): Promise<EODEntry[]> {
   const supabase = createClient()
 
   const { data } = await supabase
     .from('daily_entries')
     .select('*')
-    .eq('team_id', teamId)
+    .eq('supervisor_id', supervisorId)
     .not('entry_date', 'is', null)
     .order('entry_date', { ascending: false })
     .limit(30)
@@ -119,14 +135,14 @@ export async function fetchEODHistory(teamId: string): Promise<EODEntry[]> {
   return (data ?? []) as EODEntry[]
 }
 
-// ── Get all past covered streets for a team (for map display) ─────────────────
-export async function fetchPastCoveredStreets(teamId: string): Promise<GeoJSON.FeatureCollection> {
+// ── Get all past covered streets for a supervisor (for map display) ───────────
+export async function fetchPastCoveredStreets(supervisorId: string): Promise<GeoJSON.FeatureCollection> {
   const supabase = createClient()
 
   const { data } = await supabase
     .from('daily_entries')
     .select('covered_streets, entry_date')
-    .eq('team_id', teamId)
+    .eq('supervisor_id', supervisorId)
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
     .limit(14) // last 2 weeks
@@ -143,9 +159,10 @@ export async function fetchPastCoveredStreets(teamId: string): Promise<GeoJSON.F
   return { type: 'FeatureCollection', features: allFeatures }
 }
 
-// ── Submit EOD ────────────────────────────────────────────────────────────────
+// ── Submit EOD (one per supervisor per day) ───────────────────────────────────
 export async function submitEOD(data: {
   team_id:          string
+  supervisor_id:    string
   entry_date:       string
   pph:              number
   canvas_hours:     number
@@ -163,6 +180,7 @@ export async function submitEOD(data: {
     .from('daily_entries')
     .insert({
       team_id:          data.team_id,
+      supervisor_id:    data.supervisor_id,
       entry_date:       data.entry_date,
       pph:              data.pph,
       canvas_hours:     data.canvas_hours,
@@ -201,9 +219,8 @@ export async function fetchRecentEODs(limit = 50): Promise<EODWithTeam[]> {
 
   // Resolve team names
   const teamIds = rawEntries.map(e => e.team_id).filter(Boolean) as string[]
-  const uniqueTeamIds = teamIds.filter((id, i, arr) => arr.indexOf(id) === i)
-
-  let teamNames = new Map<string, string>()
+  const uniqueTeamIds = Array.from(new Set(teamIds))
+  const teamNames = new Map<string, string>()
   if (uniqueTeamIds.length > 0) {
     const { data: teams } = await supabase.from('teams').select('id, name').in('id', uniqueTeamIds)
     for (const t of (teams ?? []) as { id: string; name: string }[]) {
@@ -211,8 +228,20 @@ export async function fetchRecentEODs(limit = 50): Promise<EODWithTeam[]> {
     }
   }
 
+  // Resolve supervisor names
+  const supIds = rawEntries.map(e => e.supervisor_id).filter(Boolean) as string[]
+  const uniqueSupIds = Array.from(new Set(supIds))
+  const supervisorNames = new Map<string, string>()
+  if (uniqueSupIds.length > 0) {
+    const { data: sups } = await supabase.from('users').select('id, full_name, email').in('id', uniqueSupIds)
+    for (const s of (sups ?? []) as { id: string; full_name: string | null; email: string }[]) {
+      supervisorNames.set(s.id, s.full_name || s.email)
+    }
+  }
+
   return rawEntries.map(e => ({
     ...e,
-    team_name: e.team_id ? (teamNames.get(e.team_id) ?? null) : null,
+    team_name:       e.team_id ? (teamNames.get(e.team_id) ?? null) : null,
+    supervisor_name: e.supervisor_id ? (supervisorNames.get(e.supervisor_id) ?? null) : null,
   }))
 }

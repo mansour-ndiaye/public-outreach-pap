@@ -50,11 +50,29 @@ function formatCurrency(n: number) {
   return new Intl.NumberFormat('fr-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(n)
 }
 
+function initials(name: string) {
+  return name.split(' ').slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('')
+}
+
 export default function ManagerDashboard({
   territories, teams, zones, zoneStatuses, recentEODs, todayDate, locale,
 }: ManagerDashboardProps) {
   const t     = useTranslations('manager')
   const [tab, setTab] = useState<Tab>('map')
+
+  // Performance tab: supervisor filter
+  const [filterSupervisor, setFilterSupervisor] = useState('')
+
+  // Teams tab: expanded rows
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set())
+  const toggleTeam = (teamId: string) => {
+    setExpandedTeams(prev => {
+      const next = new Set(prev)
+      if (next.has(teamId)) next.delete(teamId)
+      else next.add(teamId)
+      return next
+    })
+  }
 
   // Build team color map (team_id → color)
   const teamColorMap = useMemo(() => {
@@ -65,6 +83,23 @@ export default function ManagerDashboard({
     })
     return map
   }, [teams])
+
+  // Unique supervisors across all EODs (for filter dropdown)
+  const supervisorOptions = useMemo(() => {
+    const map = new Map<string, string>() // supervisor_id → name
+    for (const e of recentEODs) {
+      if (e.supervisor_id && e.supervisor_name) {
+        map.set(e.supervisor_id, e.supervisor_name)
+      }
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  }, [recentEODs])
+
+  // Filtered EODs
+  const filteredEODs = useMemo(() => {
+    if (!filterSupervisor) return recentEODs
+    return recentEODs.filter(e => e.supervisor_id === filterSupervisor)
+  }, [recentEODs, filterSupervisor])
 
   // Performance stats
   const stats = useMemo(() => {
@@ -78,8 +113,15 @@ export default function ManagerDashboard({
     const pphs       = weekEntries.map(e => e.pph).filter(Boolean)
     const avgPph     = pphs.length ? pphs.reduce((a, b) => a + b, 0) / pphs.length : 0
 
-    return { totalPac, totalHours, avgPph }
-  }, [recentEODs])
+    // Active supervisors today = unique supervisor_ids with an EOD today
+    const activeSupervisorsToday = new Set(
+      recentEODs
+        .filter(e => e.entry_date === todayDate && e.supervisor_id)
+        .map(e => e.supervisor_id!)
+    ).size
+
+    return { totalPac, totalHours, avgPph, activeSupervisorsToday }
+  }, [recentEODs, todayDate])
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'map',         label: t('tabs.map') },
@@ -137,74 +179,99 @@ export default function ManagerDashboard({
             {zoneStatuses.length === 0 ? (
               <p className="font-body text-sm text-slate-500 dark:text-white/40">{t('teams.empty')}</p>
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-white/[0.07]">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm font-body">
-                    <thead>
-                      <tr className="bg-slate-50 dark:bg-white/[0.03]">
-                        {(['col_team','col_manager','col_territory','col_status','col_last_eod','col_pph'] as const).map(col => (
-                          <th key={col} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">
-                            {t(`teams.${col}`)}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
-                      {zoneStatuses.map(team => (
-                        <tr key={team.team_id} className="bg-white dark:bg-transparent hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors">
-                          {/* Team */}
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="w-3 h-3 rounded-full shrink-0"
-                                style={{ backgroundColor: teamColorMap[team.team_id] ?? '#94a3b8' }}
-                              />
-                              <span className="font-semibold text-brand-navy dark:text-white">
-                                {team.team_name}
-                              </span>
+              <div className="space-y-3">
+                {zoneStatuses.map(team => {
+                  const isExpanded = expandedTeams.has(team.team_id)
+                  const anyAssigned = team.supervisors.some(s => s.zone_assigned)
+                  return (
+                    <div key={team.team_id} className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-white/[0.07]">
+                      {/* Team header row */}
+                      <button
+                        onClick={() => toggleTeam(team.team_id)}
+                        className="w-full flex items-center gap-3 px-4 py-3.5 bg-slate-50 dark:bg-white/[0.03] hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors text-left"
+                      >
+                        <div
+                          className="w-3 h-3 rounded-full shrink-0"
+                          style={{ backgroundColor: teamColorMap[team.team_id] ?? '#94a3b8' }}
+                        />
+                        <span className="font-semibold font-body text-brand-navy dark:text-white flex-1">
+                          {team.team_name}
+                        </span>
+                        {team.territory_name && (
+                          <span className="font-body text-xs text-slate-400 dark:text-white/40 hidden sm:block">
+                            {team.territory_name}
+                          </span>
+                        )}
+                        <span className={cn(
+                          'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold',
+                          anyAssigned
+                            ? 'bg-brand-teal/10 text-brand-teal border border-brand-teal/25'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-white/[0.05] dark:text-white/40 dark:border-white/10',
+                        )}>
+                          <span className={cn('w-1.5 h-1.5 rounded-full', anyAssigned ? 'bg-brand-teal' : 'bg-slate-400')} />
+                          {anyAssigned
+                            ? `${team.supervisors.filter(s => s.zone_assigned).length}/${team.supervisors.length} assigné${team.supervisors.filter(s => s.zone_assigned).length > 1 ? 's' : ''}`
+                            : (locale !== 'en' ? 'Non assignée' : 'Not assigned')}
+                        </span>
+                        <svg
+                          className={cn('w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0', isExpanded && 'rotate-180')}
+                          fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+
+                      {/* Supervisor rows (expanded) */}
+                      {isExpanded && (
+                        <div className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+                          {team.supervisors.length === 0 ? (
+                            <div className="px-5 py-3 font-body text-sm text-slate-400 dark:text-white/30 italic">
+                              {locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}
                             </div>
-                          </td>
-                          {/* Supervisor */}
-                          <td className="px-4 py-3 text-slate-600 dark:text-white/60">
-                            {team.manager_name ?? '—'}
-                          </td>
-                          {/* Territory */}
-                          <td className="px-4 py-3 text-slate-600 dark:text-white/60">
-                            {team.territory_name ?? (
-                              <span className="text-slate-400 dark:text-white/30 italic">{t('teams.no_territory')}</span>
-                            )}
-                          </td>
-                          {/* Zone status */}
-                          <td className="px-4 py-3">
-                            <span className={cn(
-                              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold',
-                              team.zone_assigned
-                                ? 'bg-brand-teal/10 text-brand-teal border border-brand-teal/25'
-                                : 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-white/[0.05] dark:text-white/40 dark:border-white/10',
-                            )}>
-                              <span className={cn('w-1.5 h-1.5 rounded-full', team.zone_assigned ? 'bg-brand-teal' : 'bg-slate-400')} />
-                              {team.zone_assigned ? t('teams.status_assigned') : t('teams.status_pending')}
-                            </span>
-                          </td>
-                          {/* Last EOD */}
-                          <td className="px-4 py-3 text-slate-600 dark:text-white/60 text-xs">
-                            {team.last_eod_date ? formatDate(team.last_eod_date) : t('teams.no_eod')}
-                          </td>
-                          {/* PPH */}
-                          <td className="px-4 py-3">
-                            {team.last_pph != null ? (
-                              <span className="font-semibold text-brand-navy dark:text-brand-teal">
-                                {team.last_pph.toFixed(2)}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 dark:text-white/30">—</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                          ) : (
+                            team.supervisors.map(sup => (
+                              <div key={sup.supervisor_id} className="flex items-center gap-3 px-5 py-3 bg-white dark:bg-transparent hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors">
+                                {/* Avatar */}
+                                <div className="w-8 h-8 rounded-full bg-brand-navy/10 dark:bg-white/10 flex items-center justify-center shrink-0">
+                                  <span className="font-body text-xs font-bold text-brand-navy dark:text-white">
+                                    {initials(sup.supervisor_name)}
+                                  </span>
+                                </div>
+                                {/* Name */}
+                                <span className="flex-1 font-body text-sm text-slate-700 dark:text-white/80 min-w-0 truncate">
+                                  {sup.supervisor_name}
+                                </span>
+                                {/* Zone status */}
+                                <span className={cn(
+                                  'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap',
+                                  sup.zone_assigned
+                                    ? 'bg-brand-teal/10 text-brand-teal border border-brand-teal/25'
+                                    : 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-white/[0.05] dark:text-white/40 dark:border-white/10',
+                                )}>
+                                  {sup.zone_assigned
+                                    ? (locale !== 'en' ? 'Assignée ✓' : 'Assigned ✓')
+                                    : (locale !== 'en' ? 'Non assignée' : 'Not assigned')}
+                                </span>
+                                {/* Last EOD */}
+                                <span className="font-body text-xs text-slate-400 dark:text-white/30 hidden sm:block whitespace-nowrap">
+                                  {sup.last_eod_date ? formatDate(sup.last_eod_date) : '—'}
+                                </span>
+                                {/* PPH */}
+                                {sup.last_pph != null ? (
+                                  <span className="font-body text-xs font-semibold text-brand-teal hidden sm:block whitespace-nowrap">
+                                    {sup.last_pph.toFixed(2)} PPH
+                                  </span>
+                                ) : (
+                                  <span className="hidden sm:block text-slate-300 dark:text-white/20 text-xs">—</span>
+                                )}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -218,19 +285,44 @@ export default function ManagerDashboard({
             </h2>
 
             {/* Stats cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <StatCard label={t('performance.week_pac')} value={String(stats.totalPac)} accent="navy" />
               <StatCard label={t('performance.avg_pph')} value={stats.avgPph.toFixed(2)} accent="teal" />
               <StatCard label={t('performance.canvas_hours')} value={stats.totalHours.toFixed(1) + 'h'} accent="red" />
+              <StatCard
+                label={locale !== 'en' ? 'Superviseurs actifs aujourd\'hui' : 'Active supervisors today'}
+                value={String(stats.activeSupervisorsToday)}
+                accent="slate"
+              />
             </div>
 
             {/* Recent EODs table */}
             <div>
-              <h3 className="font-display text-base font-semibold text-brand-navy dark:text-white mb-4">
-                {t('performance.recent_eods')}
-              </h3>
+              <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                <h3 className="font-display text-base font-semibold text-brand-navy dark:text-white">
+                  {t('performance.recent_eods')}
+                </h3>
+                {/* Supervisor filter */}
+                {supervisorOptions.length > 0 && (
+                  <select
+                    value={filterSupervisor}
+                    onChange={e => setFilterSupervisor(e.target.value)}
+                    className={cn(
+                      'rounded-xl px-3 py-2 font-body text-xs',
+                      'bg-slate-50 border border-slate-200 text-slate-700',
+                      'dark:bg-white/[0.06] dark:border-white/10 dark:text-white',
+                      'focus-visible:outline-none focus-visible:border-brand-teal',
+                    )}
+                  >
+                    <option value="">{locale !== 'en' ? 'Tous les superviseurs' : 'All supervisors'}</option>
+                    {supervisorOptions.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
 
-              {recentEODs.length === 0 ? (
+              {filteredEODs.length === 0 ? (
                 <p className="font-body text-sm text-slate-500 dark:text-white/40">{t('performance.empty')}</p>
               ) : (
                 <div className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-white/[0.07]">
@@ -238,15 +330,17 @@ export default function ManagerDashboard({
                     <table className="w-full text-sm font-body">
                       <thead>
                         <tr className="bg-slate-50 dark:bg-white/[0.03]">
-                          {(['col_date','col_team','col_pph','col_hours','col_pac','col_note'] as const).map(col => (
-                            <th key={col} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">
-                              {t(`performance.${col}`)}
-                            </th>
-                          ))}
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_date')}</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_team')}</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{locale !== 'en' ? 'Superviseur' : 'Supervisor'}</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_pph')}</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_hours')}</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_pac')}</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_note')}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
-                        {recentEODs.map(eod => (
+                        {filteredEODs.map(eod => (
                           <tr key={eod.id} className="bg-white dark:bg-transparent hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors">
                             <td className="px-4 py-3 text-slate-600 dark:text-white/60 text-xs whitespace-nowrap">
                               {eod.entry_date ? formatDate(eod.entry_date) : '—'}
@@ -261,6 +355,18 @@ export default function ManagerDashboard({
                                   <span className="font-semibold text-brand-navy dark:text-white">{eod.team_name}</span>
                                 </div>
                               ) : '—'}
+                            </td>
+                            <td className="px-4 py-3">
+                              {eod.supervisor_name ? (
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded-full bg-brand-navy/10 dark:bg-white/10 flex items-center justify-center shrink-0">
+                                    <span className="font-body text-[9px] font-bold text-brand-navy dark:text-white">
+                                      {initials(eod.supervisor_name)}
+                                    </span>
+                                  </div>
+                                  <span className="text-slate-700 dark:text-white/70 text-xs">{eod.supervisor_name}</span>
+                                </div>
+                              ) : <span className="text-slate-400 dark:text-white/30">—</span>}
                             </td>
                             <td className="px-4 py-3 font-semibold text-brand-navy dark:text-brand-teal">
                               {eod.pph?.toFixed(2) ?? '—'}
@@ -294,19 +400,20 @@ export default function ManagerDashboard({
 function StatCard({ label, value, accent }: {
   label: string
   value: string
-  accent: 'navy' | 'teal' | 'red'
+  accent: 'navy' | 'teal' | 'red' | 'slate'
 }) {
   const accentMap = {
-    navy: 'bg-brand-navy/10 text-brand-navy dark:text-white border-brand-navy/20',
-    teal: 'bg-brand-teal/10 text-brand-teal border-brand-teal/20',
-    red:  'bg-brand-red/10 text-brand-red border-brand-red/20',
+    navy:  'bg-brand-navy/10 text-brand-navy dark:text-white border-brand-navy/20',
+    teal:  'bg-brand-teal/10 text-brand-teal border-brand-teal/20',
+    red:   'bg-brand-red/10 text-brand-red border-brand-red/20',
+    slate: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-white/[0.05] dark:text-white dark:border-white/10',
   }
   return (
     <div className={cn(
       'rounded-2xl border p-5',
       accentMap[accent],
     )}>
-      <p className="font-body text-xs font-semibold uppercase tracking-wide opacity-60 mb-1">{label}</p>
+      <p className="font-body text-xs font-semibold uppercase tracking-wide opacity-60 mb-1 leading-tight">{label}</p>
       <p className="font-display text-2xl font-bold">{value}</p>
     </div>
   )
