@@ -472,13 +472,14 @@ export default function ManagerMap({
         </button>
       )}
 
-      {/* Map style selector */}
-      <MapStyleSelector
-        activeUrl={mapStyleUrl}
-        onSelect={setMapStyle}
-        locale={locale}
-        className="bottom-8 right-4"
-      />
+      {/* Map style selector — bottom-center, hidden when panel is open on desktop */}
+      {(!panelOpen || isTouch) && (
+        <MapStyleSelector
+          activeUrl={mapStyleUrl}
+          onSelect={setMapStyle}
+          locale={locale}
+        />
+      )}
 
       {/* Legend */}
       <div className={cn(
@@ -547,9 +548,195 @@ export default function ManagerMap({
         </div>
       )}
 
-      {/* Assignment Panel */}
+      {/* ── MOBILE: Drawing mode overlay (floating buttons + thin bar) ─────── */}
+      {isTouch && panelOpen && drawMode === 'drawing' && (
+        <>
+          {/* Drawing instruction banner */}
+          <div className={cn(
+            'absolute top-4 left-1/2 -translate-x-1/2 z-30',
+            'flex items-center gap-2 px-4 py-2 rounded-xl',
+            'bg-brand-navy/90 backdrop-blur-sm border border-white/10 shadow-lg',
+            'pointer-events-none',
+          )}>
+            <svg className="w-3.5 h-3.5 shrink-0 text-brand-teal" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+            <span className="font-body text-xs text-white whitespace-nowrap">
+              {locale !== 'en'
+                ? 'Appuyez sur la carte pour tracer'
+                : 'Tap the map to draw'}
+            </span>
+          </div>
+
+          {/* Floating Undo (top-left, below nav) */}
+          <button
+            onClick={undoStreet}
+            className={cn(
+              'absolute top-16 left-4 z-30',
+              'flex items-center gap-1.5 px-3 h-10 rounded-xl',
+              'bg-white/95 dark:bg-[#12163a]/95 backdrop-blur-sm',
+              'border border-slate-200/80 dark:border-white/[0.12] shadow-md',
+              'font-body text-xs font-semibold text-slate-700 dark:text-white/80',
+              'active:scale-[0.97] transition-transform',
+            )}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 0 1 8 8v2M3 10l6 6M3 10l6-6" />
+            </svg>
+            {t('undo_street')}
+          </button>
+
+          {/* Floating Finish Street (top-right, below nav) */}
+          <button
+            onClick={finishStreet}
+            disabled={currentLine.length < 2}
+            className={cn(
+              'absolute top-16 right-4 z-30',
+              'flex items-center gap-1.5 px-3 h-10 rounded-xl',
+              'bg-brand-navy/95 backdrop-blur-sm border border-white/10 shadow-md',
+              'font-body text-xs font-semibold text-white',
+              'active:scale-[0.97] disabled:opacity-50 transition-transform',
+            )}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            {t('finish_street')}
+          </button>
+
+          {/* Thin bar at bottom — team name + save */}
+          <div className={cn(
+            'absolute inset-x-0 bottom-0 z-30',
+            'flex items-center justify-between px-4 gap-3',
+            'h-16 bg-white dark:bg-[#12163a]',
+            'border-t border-slate-200/80 dark:border-white/[0.08] shadow-2xl',
+          )}>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: getColor(teamColorMap, formTeamId) }} />
+              <div className="min-w-0">
+                <p className="font-body text-[10px] text-slate-400 dark:text-white/40 uppercase tracking-wide leading-none mb-0.5">
+                  {t('team')}
+                </p>
+                <p className="font-body text-sm font-semibold text-brand-navy dark:text-white truncate">
+                  {teams.find(tm => tm.id === formTeamId)?.name ?? '—'}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {(drawnStreets.length > 0 || currentLine.length >= 2) && (
+                <span className="font-body text-xs text-slate-400 dark:text-white/40">
+                  {drawnStreets.length + (currentLine.length >= 2 ? 1 : 0)} rue(s)
+                </span>
+              )}
+              <button
+                onClick={saveZone}
+                disabled={saving || (drawnStreets.length === 0 && currentLine.length < 2 && !aiPreview?.length)}
+                className={cn(
+                  'flex items-center gap-1.5 px-4 h-10 rounded-xl',
+                  'bg-brand-teal text-white font-body text-sm font-semibold',
+                  'active:scale-[0.97] disabled:opacity-50 transition-transform',
+                )}
+              >
+                {saving ? (
+                  <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+                {t('finish')}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── MOBILE: Setup bottom sheet (idle drawing setup) ───────────────── */}
+      {isTouch && panelOpen && drawMode === 'idle' && (
+        <div className={cn(
+          'absolute inset-x-0 bottom-0 z-30',
+          'rounded-t-3xl bg-white dark:bg-[#12163a]',
+          'border-t border-slate-200/80 dark:border-white/[0.08] shadow-2xl',
+          'max-h-[65vh] flex flex-col',
+          'animate-slide-up',
+        )}>
+          {/* Drag handle */}
+          <div className="flex justify-center pt-3 pb-1 shrink-0">
+            <div className="w-10 h-1 rounded-full bg-slate-300 dark:bg-white/20" />
+          </div>
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200/60 dark:border-white/[0.07] shrink-0">
+            <h2 className="font-display text-base font-bold text-brand-navy dark:text-white">
+              {t('panel_title')}
+            </h2>
+            <button onClick={closePanel} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Form fields (scrollable) */}
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            {saveSuccess && (
+              <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                {t('zone_saved')}
+              </div>
+            )}
+            {saveError && (
+              <div className="rounded-xl px-4 py-3 bg-brand-red/10 border border-brand-red/30 text-brand-red font-body text-sm">
+                {saveError}
+              </div>
+            )}
+            {/* Team */}
+            <div>
+              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                {t('team')} <span className="text-brand-red">*</span>
+              </label>
+              <select value={formTeamId} onChange={e => setFormTeamId(e.target.value)} className={inputCls}>
+                <option value="">{t('team_placeholder')}</option>
+                {teams.map(team => (
+                  <option key={team.id} value={team.id}>{team.name}</option>
+                ))}
+              </select>
+            </div>
+            {/* Date */}
+            <div>
+              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                {t('date')} <span className="text-brand-red">*</span>
+              </label>
+              <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} className={inputCls} />
+            </div>
+            {/* Note */}
+            <div>
+              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                {t('note')}
+              </label>
+              <textarea rows={2} value={formNote} onChange={e => setFormNote(e.target.value)} placeholder={t('note_placeholder')} className={cn(inputCls, 'resize-none')} />
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="px-5 py-4 border-t border-slate-200/60 dark:border-white/[0.07] space-y-2 shrink-0">
+            <button onClick={startDrawing} className={cn(btnPrimary, 'min-h-[48px]')}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+              {t('start_drawing')}
+            </button>
+            <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── DESKTOP: Right-side assignment panel ─────────────────────────── */}
+      {!isTouch && (
       <div className={cn(
-        'absolute inset-y-0 right-0 z-30 w-full sm:w-96',
+        'absolute inset-y-0 right-0 z-30 w-96',
         'bg-white dark:bg-[#12163a]',
         'border-l border-slate-200/80 dark:border-white/[0.08]',
         'shadow-2xl flex flex-col',
@@ -649,7 +836,11 @@ export default function ManagerMap({
                 <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span>{t('drawing_hint')}</span>
+                <span>
+                  {locale !== 'en'
+                    ? 'Cliquez sur la carte pour tracer les rues de l\'équipe'
+                    : 'Click on the map to draw team streets'}
+                </span>
               </div>
 
               {/* AI Street Assistant */}
@@ -760,6 +951,7 @@ export default function ManagerMap({
           )}
         </div>
       </div>
+      )} {/* end !isTouch desktop panel */}
 
     </div>
   )

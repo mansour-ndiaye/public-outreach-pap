@@ -792,7 +792,6 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
           <MapStyleSelector
             activeUrl={mapStyleUrl}
             onSelect={setMapStyle}
-            className="bottom-10 right-14"
           />
         )}
 

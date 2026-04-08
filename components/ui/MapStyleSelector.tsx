@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 
 const STORAGE_KEY = 'pap_map_style'
@@ -19,6 +19,15 @@ export const MAP_STYLES: { id: MapStyleId; labelFr: string; labelEn: string; url
   { id: 'light',      labelFr: 'Clair',      labelEn: 'Light',      url: 'mapbox://styles/mapbox/light-v11' },
   { id: 'navigation', labelFr: 'Navigation', labelEn: 'Navigation', url: 'mapbox://styles/mapbox/navigation-day-v1' },
 ]
+
+// Representative preview colors for each style
+const STYLE_BG: Record<MapStyleId, string> = {
+  dark:       '#0f172a',
+  streets:    '#f0ece2',
+  satellite:  '#1c3520',
+  light:      '#f5f5f5',
+  navigation: '#cfe8fa',
+}
 
 // ── Hook: get/set the persisted map style ──────────────────────────────────────
 export function useMapStyle(resolvedTheme: string | undefined): [string, (id: MapStyleId) => void] {
@@ -68,89 +77,57 @@ interface MapStyleSelectorProps {
   onSelect: (id: MapStyleId) => void
   /** Optional locale for label language */
   locale?: string
-  /** Positioning class (e.g. 'top-4 right-16') */
+  /** Additional positioning / override classes (default: bottom-4 left-1/2 -translate-x-1/2) */
   className?: string
 }
 
 export function MapStyleSelector({ activeUrl, onSelect, locale, className }: MapStyleSelectorProps) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
   const isFr = locale !== 'en'
 
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  const active = MAP_STYLES.find(s => s.url === activeUrl) ?? MAP_STYLES[0]
-
   return (
-    <div ref={ref} className={cn('absolute z-20', className)}>
-      {/* Trigger button */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        title={isFr ? 'Style de carte' : 'Map style'}
-        className={cn(
-          'flex items-center gap-1.5 h-9 px-3 rounded-xl',
-          'bg-white/90 dark:bg-[#12163a]/95 backdrop-blur-sm',
-          'border border-slate-200/80 dark:border-white/[0.12] shadow-md',
-          'font-body text-xs font-semibold text-slate-700 dark:text-white/80',
-          'hover:bg-white dark:hover:bg-white/10',
-          'transition-colors duration-150 select-none',
-        )}
-      >
-        <svg className="w-3.5 h-3.5 shrink-0 text-slate-500 dark:text-white/50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
-          <line x1="9" y1="3" x2="9" y2="18"/>
-          <line x1="15" y1="6" x2="15" y2="21"/>
-        </svg>
-        <span className="hidden sm:inline">{isFr ? active.labelFr : active.labelEn}</span>
-        <svg className={cn('w-3 h-3 shrink-0 text-slate-400 dark:text-white/40 transition-transform duration-150', open && 'rotate-180')} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
-        </svg>
-      </button>
-
-      {/* Dropdown */}
-      {open && (
-        <div className={cn(
-          'absolute top-full mt-1 right-0 min-w-[140px]',
-          'bg-white dark:bg-[#12163a]',
-          'border border-slate-200/80 dark:border-white/[0.10]',
-          'rounded-xl shadow-2xl overflow-hidden',
-          'py-1',
-          'animate-fade-in',
-        )}>
-          {MAP_STYLES.map(style => {
-            const isActive = style.url === activeUrl
-            return (
-              <button
-                key={style.id}
-                onClick={() => { onSelect(style.id); setOpen(false) }}
+    <div className={cn(
+      'absolute z-20 bottom-4 left-1/2 -translate-x-1/2',
+      className,
+    )}>
+      {/* Horizontal scrollable thumbnail row */}
+      <div className={cn(
+        'flex gap-2 px-3 py-2 rounded-2xl',
+        'bg-black/40 backdrop-blur-sm',
+        'overflow-x-auto max-w-[calc(100vw-32px)]',
+        // Hide default scrollbar on all browsers
+        '[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]',
+      )}>
+        {MAP_STYLES.map(style => {
+          const isActive = style.url === activeUrl
+          const label = isFr ? style.labelFr : style.labelEn
+          return (
+            <button
+              key={style.id}
+              onClick={() => onSelect(style.id)}
+              title={label}
+              className="flex flex-col items-center gap-1 flex-shrink-0 group select-none"
+            >
+              {/* Color tile */}
+              <div
                 className={cn(
-                  'w-full flex items-center gap-2.5 px-3 py-2 text-left',
-                  'font-body text-xs font-medium',
-                  'transition-colors duration-100',
+                  'w-[52px] h-[40px] rounded-xl border-2 transition-all duration-150',
                   isActive
-                    ? 'bg-brand-navy/8 dark:bg-white/[0.08] text-brand-navy dark:text-brand-teal'
-                    : 'text-slate-600 dark:text-white/60 hover:bg-slate-50 dark:hover:bg-white/[0.04]',
+                    ? 'border-brand-teal shadow-[0_0_0_2px_rgba(0,181,163,0.35)] scale-[1.07]'
+                    : 'border-white/25 group-hover:border-white/60 group-active:scale-[0.97]',
                 )}
-              >
-                {/* Active dot */}
-                <span className={cn(
-                  'w-1.5 h-1.5 rounded-full shrink-0',
-                  isActive ? 'bg-brand-teal' : 'bg-transparent',
-                )} />
-                {isFr ? style.labelFr : style.labelEn}
-              </button>
-            )
-          })}
-        </div>
-      )}
+                style={{ backgroundColor: STYLE_BG[style.id] }}
+              />
+              {/* Label */}
+              <span className={cn(
+                'font-body text-[10px] font-semibold whitespace-nowrap drop-shadow',
+                isActive ? 'text-brand-teal' : 'text-white/80',
+              )}>
+                {label}
+              </span>
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
