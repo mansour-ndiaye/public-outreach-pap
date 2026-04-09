@@ -550,8 +550,8 @@ export default function ManagerMap({
         <button
           onClick={() => setMapLocked(prev => !prev)}
           className={cn(
-            'absolute bottom-20 left-4 z-10',
-            'flex items-center gap-2 px-3 h-10 rounded-xl',
+            'absolute top-4 right-4 z-10',
+            'flex items-center gap-2 px-3 h-11 rounded-xl',
             'backdrop-blur-sm border shadow-md',
             'font-body text-xs font-medium transition-colors',
             mapLocked
@@ -577,7 +577,7 @@ export default function ManagerMap({
       {/* Mobile lock hint */}
       {showLockHint && (
         <div className={cn(
-          'absolute inset-x-4 bottom-32 z-10',
+          'absolute inset-x-4 top-20 z-10',
           'flex items-center justify-center',
           'bg-brand-navy/90 backdrop-blur-sm text-white',
           'rounded-xl border border-white/10 shadow-lg',

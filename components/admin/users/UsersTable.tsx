@@ -4,6 +4,7 @@ import { useState, useMemo, useTransition } from 'react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { createUser, updateUserRole, deleteUser } from '@/lib/supabase/user-actions'
+import { AvatarButton, AvatarDisplay } from '@/components/ui/AvatarButton'
 import type { UserRow, UserRole } from '@/types'
 
 // ── Role config ───────────────────────────────────────────────────────────────
@@ -276,9 +277,13 @@ export function UsersTable({ users }: UsersTableProps) {
                     {/* Name + email */}
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-brand-navy flex items-center justify-center text-white font-display font-bold text-xs shrink-0 select-none">
-                          {(user.full_name || user.email).charAt(0).toUpperCase()}
-                        </div>
+                        <AvatarDisplay
+                          name={user.full_name || user.email}
+                          avatarUrl={user.avatar_url}
+                          size="sm"
+                          bgClass="bg-brand-navy"
+                          className="text-white"
+                        />
                         <div className="min-w-0">
                           <p className="font-body text-sm font-semibold text-slate-900 dark:text-white truncate">
                             {user.full_name || '—'}
@@ -455,9 +460,28 @@ export function UsersTable({ users }: UsersTableProps) {
           <h2 className="font-display text-lg font-bold text-brand-navy dark:text-white mb-1">
             {t('modal_edit_title')}
           </h2>
-          <p className="font-body text-sm text-slate-500 dark:text-white/45 mb-6">
+          <p className="font-body text-sm text-slate-500 dark:text-white/45 mb-5">
             {editUser.full_name || editUser.email}
           </p>
+
+          {/* Avatar upload */}
+          <div className="flex items-center gap-4 mb-6 p-4 rounded-xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200/80 dark:border-white/[0.07]">
+            <AvatarButton
+              userId={editUser.id}
+              name={editUser.full_name || editUser.email}
+              avatarUrl={editUser.avatar_url}
+              size="lg"
+              bgClass="bg-brand-navy"
+            />
+            <div>
+              <p className="font-body text-sm font-semibold text-slate-700 dark:text-white/80">
+                Photo de profil
+              </p>
+              <p className="font-body text-xs text-slate-400 dark:text-white/40 mt-0.5">
+                JPG, PNG ou WebP — max 2 Mo
+              </p>
+            </div>
+          </div>
 
           <Field label={t('modal_edit_role')}>
             <select

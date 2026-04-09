@@ -35,12 +35,13 @@ export type TeamZoneStatus = {
 }
 
 export type SupervisorZoneStatus = {
-  supervisor_id:   string
-  supervisor_name: string
-  zone_assigned:   boolean
-  zone_id:         string | null
-  last_eod_date:   string | null
-  last_pph:        number | null
+  supervisor_id:        string
+  supervisor_name:      string
+  supervisor_avatar_url: string | null
+  zone_assigned:        boolean
+  zone_id:              string | null
+  last_eod_date:        string | null
+  last_pph:             number | null
 }
 
 // ── Fetch all daily zones (for manager map) ───────────────────────────────────
@@ -142,24 +143,22 @@ export async function fetchTeamsWithZoneStatus(date: string): Promise<TeamZoneSt
     }
   }
 
-  // Resolve manager names + all supervisor names
+  // Resolve manager names + all supervisor names + avatars
   const allUserIds = [
     ...teams.map(t => t.manager_id).filter(Boolean) as string[],
     ...members.map(m => m.user_id),
   ]
   const uniqueUserIds = Array.from(new Set(allUserIds))
-  const userNames = new Map<string, string>()
+  const userNames   = new Map<string, string>()
+  const userAvatars = new Map<string, string | null>()
   if (uniqueUserIds.length > 0) {
     const { data: users } = await supabase
       .from('users')
-      .select('id, full_name, email, role')
+      .select('id, full_name, email, role, avatar_url')
       .in('id', uniqueUserIds)
-    for (const u of (users ?? []) as { id: string; full_name: string | null; email: string; role: string }[]) {
+    for (const u of (users ?? []) as { id: string; full_name: string | null; email: string; role: string; avatar_url: string | null }[]) {
       userNames.set(u.id, u.full_name || u.email)
-    }
-    // Keep only supervisors in a separate set for filtering
-    for (const u of (users ?? []) as { id: string; full_name: string | null; email: string; role: string }[]) {
-      if (u.role !== 'supervisor') continue
+      userAvatars.set(u.id, u.avatar_url ?? null)
     }
   }
 
@@ -202,12 +201,13 @@ export async function fetchTeamsWithZoneStatus(date: string): Promise<TeamZoneSt
       const zoneId = zoneKeyMap.get(key) ?? null
       const lastEod = lastEodBySup.get(supId)
       return {
-        supervisor_id:   supId,
-        supervisor_name: userNames.get(supId) ?? supId,
-        zone_assigned:   zoneId !== null,
-        zone_id:         zoneId,
-        last_eod_date:   lastEod?.date ?? null,
-        last_pph:        lastEod?.pph ?? null,
+        supervisor_id:         supId,
+        supervisor_name:       userNames.get(supId) ?? supId,
+        supervisor_avatar_url: userAvatars.get(supId) ?? null,
+        zone_assigned:         zoneId !== null,
+        zone_id:               zoneId,
+        last_eod_date:         lastEod?.date ?? null,
+        last_pph:              lastEod?.pph ?? null,
       }
     })
 

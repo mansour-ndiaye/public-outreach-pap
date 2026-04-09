@@ -743,8 +743,8 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
           <button
             onClick={() => setMapLocked(prev => !prev)}
             className={cn(
-              'lg:hidden absolute bottom-4 left-4 z-10',
-              'flex items-center gap-2 px-3 h-10 rounded-xl',
+              'lg:hidden absolute top-4 right-4 z-10',
+              'flex items-center gap-2 px-3 h-11 rounded-xl',
               'backdrop-blur-sm border shadow-md',
               'font-body text-xs font-medium transition-colors',
               mapLocked
@@ -772,7 +772,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
         {/* ── Mobile lock hint overlay (disappears after 3 s) ───────────────── */}
         {showLockHint && (
           <div className={cn(
-            'lg:hidden absolute inset-x-4 bottom-16 z-10',
+            'lg:hidden absolute inset-x-4 top-20 z-10',
             'flex items-center justify-center',
             'bg-brand-navy/90 backdrop-blur-sm text-white',
             'rounded-xl border border-white/10 shadow-lg',

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import nextDynamic from 'next/dynamic'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
+import { AvatarDisplay } from '@/components/ui/AvatarButton'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam, TeamZoneStatus } from '@/lib/supabase/zone-actions'
 import type { EODWithTeam } from '@/lib/supabase/eod-actions'
@@ -62,27 +63,10 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('')
 }
 
-// ── Expandable note ────────────────────────────────────────────────────────────
-function ExpandableNote({ note, locale }: { note: string | null; locale?: string }) {
-  const [expanded, setExpanded] = useState(false)
+// ── Truncated note (table cell) ───────────────────────────────────────────────
+function TruncatedNote({ note }: { note: string | null }) {
   if (!note) return <span className="text-slate-400 dark:text-white/30">—</span>
-  const short = note.length > 80
-  const display = !short || expanded ? note : note.slice(0, 80) + '…'
-  return (
-    <span>
-      {display}
-      {short && (
-        <button
-          onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
-          className="ml-1 text-brand-teal hover:underline font-semibold text-xs"
-        >
-          {expanded
-            ? (locale !== 'en' ? 'Voir moins' : 'See less')
-            : (locale !== 'en' ? 'Voir plus' : 'See more')}
-        </button>
-      )}
-    </span>
-  )
+  return <span title={note}>{note.length > 80 ? note.slice(0, 80) + '…' : note}</span>
 }
 
 export default function ManagerDashboard({
@@ -154,9 +138,10 @@ export default function ManagerDashboard({
     if (!detailSupervisorId) return null
     const eods = recentEODs.filter(e => e.supervisor_id === detailSupervisorId)
     if (!eods.length) return null
-    const name = eods[0].supervisor_name ?? detailSupervisorId
-    const teamName = eods[0].team_name ?? '—'
-    const teamId = eods[0].team_id ?? ''
+    const name      = eods[0].supervisor_name ?? detailSupervisorId
+    const avatarUrl = eods[0].supervisor_avatar_url ?? null
+    const teamName  = eods[0].team_name ?? '—'
+    const teamId    = eods[0].team_id ?? ''
 
     const now = new Date()
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
@@ -168,7 +153,7 @@ export default function ManagerDashboard({
     const bestPph = pphs.length ? Math.max(...pphs) : 0
     const bestPphDate = eods.find(e => e.pph === bestPph)?.entry_date ?? null
 
-    return { name, teamName, teamId, eods, totalPacMonth, totalHours, avgPph, bestPph, bestPphDate }
+    return { name, avatarUrl, teamName, teamId, eods, totalPacMonth, totalHours, avgPph, bestPph, bestPphDate }
   }, [detailSupervisorId, recentEODs])
 
   const tabs: { key: Tab; label: string }[] = [
@@ -281,9 +266,12 @@ export default function ManagerDashboard({
                           ) : (
                             team.supervisors.map(sup => (
                               <div key={sup.supervisor_id} className="flex items-center gap-3 px-5 py-3 bg-white dark:bg-transparent hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors">
-                                <div className="w-8 h-8 rounded-full bg-brand-navy/10 dark:bg-white/10 flex items-center justify-center shrink-0">
-                                  <span className="font-body text-xs font-bold text-brand-navy dark:text-white">{initials(sup.supervisor_name)}</span>
-                                </div>
+                                <AvatarDisplay
+                                  name={sup.supervisor_name}
+                                  avatarUrl={sup.supervisor_avatar_url}
+                                  size="sm"
+                                  className="text-xs font-bold text-brand-navy dark:text-white"
+                                />
                                 <span className="flex-1 font-body text-sm text-slate-700 dark:text-white/80 min-w-0 truncate">{sup.supervisor_name}</span>
                                 <span className={cn(
                                   'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap',
@@ -395,9 +383,13 @@ export default function ManagerDashboard({
                                   onClick={() => { setDetailSupervisorId(eod.supervisor_id ?? null); setExpandedEOD(null) }}
                                   className="flex items-center gap-2 group"
                                 >
-                                  <div className="w-6 h-6 rounded-full bg-brand-navy/10 dark:bg-white/10 flex items-center justify-center shrink-0 group-hover:bg-brand-teal/20 transition-colors">
-                                    <span className="font-body text-[9px] font-bold text-brand-navy dark:text-white">{initials(eod.supervisor_name)}</span>
-                                  </div>
+                                  <AvatarDisplay
+                                    name={eod.supervisor_name}
+                                    avatarUrl={eod.supervisor_avatar_url}
+                                    size="xs"
+                                    bgClass="bg-brand-navy/10 dark:bg-white/10 group-hover:bg-brand-teal/20"
+                                    className="transition-colors text-[9px] font-bold text-brand-navy dark:text-white"
+                                  />
                                   <span className="text-slate-700 dark:text-white/70 text-xs group-hover:text-brand-teal transition-colors">{eod.supervisor_name}</span>
                                 </button>
                               ) : <span className="text-slate-400 dark:text-white/30">—</span>}
@@ -412,7 +404,7 @@ export default function ManagerDashboard({
                               {eod.pac_total_amount ? formatCurrency(eod.pac_total_amount) : '—'}
                             </td>
                             <td className="px-4 py-3 text-slate-500 dark:text-white/40 max-w-[220px]">
-                              <ExpandableNote note={eod.note} locale={locale} />
+                              <TruncatedNote note={eod.note} />
                             </td>
                           </tr>
                         ))}
@@ -444,9 +436,13 @@ export default function ManagerDashboard({
           )}>
             {/* Header */}
             <div className="flex items-center gap-4 px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.07] shrink-0">
-              <div className="w-12 h-12 rounded-full bg-brand-navy flex items-center justify-center text-white font-display font-bold text-lg select-none shrink-0">
-                {initials(detailSupervisor.name)}
-              </div>
+              <AvatarDisplay
+                name={detailSupervisor.name}
+                avatarUrl={detailSupervisor.avatarUrl}
+                size="lg"
+                bgClass="bg-brand-navy"
+                className="text-white text-lg"
+              />
               <div className="flex-1 min-w-0">
                 <p className="font-display text-base font-bold text-brand-navy dark:text-white truncate">{detailSupervisor.name}</p>
                 <p className="font-body text-xs text-slate-500 dark:text-white/50">{detailSupervisor.teamName}</p>

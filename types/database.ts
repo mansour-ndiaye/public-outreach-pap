@@ -9,23 +9,26 @@ export type Database = {
     Tables: {
       users: {
         Row: {
-          id:         string
-          email:      string
-          full_name:  string | null
-          role:       UserRole
-          created_at: string
-        }
-        Insert: {
           id:          string
           email:       string
-          full_name?:  string | null
-          role?:       UserRole
-          created_at?: string
+          full_name:   string | null
+          role:        UserRole
+          avatar_url:  string | null
+          created_at:  string
+        }
+        Insert: {
+          id:           string
+          email:        string
+          full_name?:   string | null
+          role?:        UserRole
+          avatar_url?:  string | null
+          created_at?:  string
         }
         Update: {
-          email?:     string
-          full_name?: string | null
-          role?:      UserRole
+          email?:      string
+          full_name?:  string | null
+          role?:       UserRole
+          avatar_url?: string | null
         }
         Relationships: []
       }
@@ -156,12 +159,15 @@ export type Database = {
           id:               string
           assignment_id:    string | null
           team_id:          string | null
+          supervisor_id:    string | null
           entry_date:       string | null
           pac_count:        number
           pac_total_amount: number
           pac_average:      number
           pph:              number
           recalls_count:    number
+          recalls:          unknown | null
+          pfu:              number
           canvas_hours:     number | null
           note:             string | null
           covered_streets:  Record<string, unknown> | null
@@ -171,12 +177,15 @@ export type Database = {
           id?:               string
           assignment_id?:    string | null
           team_id?:          string | null
+          supervisor_id?:    string | null
           entry_date?:       string | null
           pac_count?:        number
           pac_total_amount?: number
           pac_average?:      number
           pph?:              number
           recalls_count?:    number
+          recalls?:          unknown | null
+          pfu?:              number
           canvas_hours?:     number | null
           note?:             string | null
           covered_streets?:  Record<string, unknown> | null
@@ -188,6 +197,8 @@ export type Database = {
           pac_average?:      number
           pph?:              number
           recalls_count?:    number
+          recalls?:          unknown | null
+          pfu?:              number
           canvas_hours?:     number | null
           note?:             string | null
           covered_streets?:  Record<string, unknown> | null

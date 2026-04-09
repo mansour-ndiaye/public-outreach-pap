@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { LocaleToggle } from '@/components/ui/LocaleToggle'
+import { AvatarButton } from '@/components/ui/AvatarButton'
 import { signOut } from '@/lib/supabase/actions'
 import { cn } from '@/lib/utils'
 import type { UserRow } from '@/types'
@@ -61,9 +62,13 @@ export function ManagerShell({ children, user, locale }: ManagerShellProps) {
         <div className="flex items-center gap-2">
           {/* User badge */}
           <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-white/[0.06]">
-            <div className="w-6 h-6 rounded-full bg-brand-navy flex items-center justify-center text-white font-display font-bold text-[10px] select-none">
-              {displayName.charAt(0).toUpperCase()}
-            </div>
+            <AvatarButton
+              userId={user.id}
+              name={displayName}
+              avatarUrl={user.avatar_url}
+              size="xs"
+              locale={locale}
+            />
             <span className="font-body text-xs font-semibold text-slate-700 dark:text-white/70">
               {displayName}
             </span>

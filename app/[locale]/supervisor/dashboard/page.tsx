@@ -7,6 +7,7 @@ import {
   fetchTodayEOD,
   fetchEODHistory,
   fetchPastCoveredStreets,
+  fetchTeamPastCoveredStreets,
 } from '@/lib/supabase/eod-actions'
 import { getCurrentUser } from '@/lib/supabase/actions'
 import { createClient } from '@/lib/supabase/server'
@@ -82,7 +83,7 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
 
   const [
     territory, todayZones, teamZones, todayEOD,
-    eodHistory, pastStreets, supervisorName, allTeams,
+    eodHistory, pastStreets, teamPastStreets, supervisorName, allTeams,
   ] = await Promise.all([
     fetchSupervisorTerritory(team.teamId),
     fetchTodayZones(user.id, today),
@@ -90,6 +91,7 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
     fetchTodayEOD(user.id, today),
     fetchEODHistory(user.id),
     fetchPastCoveredStreets(user.id),
+    fetchTeamPastCoveredStreets(team.teamId, user.id),
     fetchSupervisorName(user.id),
     fetchAllTeams(),
   ])
@@ -111,6 +113,7 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
       todayEOD={todayEOD}
       eodHistory={eodHistory}
       pastStreets={pastStreets}
+      teamPastStreets={teamPastStreets}
       todayDate={today}
       teamColor={teamColor}
       locale={locale}

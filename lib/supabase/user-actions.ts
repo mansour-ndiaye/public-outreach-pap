@@ -92,6 +92,41 @@ export async function updateUserRole(
   }
 }
 
+// ── Update avatar URL ─────────────────────────────────────────────────────────
+export async function updateAvatarUrl(
+  userId: string,
+  url: string | null,
+): Promise<{ error?: string }> {
+  try {
+    const supabase = createClient()
+    const { data: { user: currentUser } } = await supabase.auth.getUser()
+    if (!currentUser) return { error: 'Unauthorized' }
+
+    // Allow updating own avatar, or admin updating anyone
+    if (userId !== currentUser.id) {
+      const { data: profile } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', currentUser.id)
+        .single() as { data: { role: string } | null; error: unknown }
+      if (profile?.role !== 'admin') return { error: 'Unauthorized' }
+    }
+
+    const admin = createAdminClient()
+    const { error } = await admin.from('users').update({ avatar_url: url }).eq('id', userId)
+    if (error) return { error: error.message }
+
+    revalidateUserPaths()
+    revalidatePath('/fr/supervisor/dashboard')
+    revalidatePath('/en/supervisor/dashboard')
+    revalidatePath('/fr/manager/dashboard')
+    revalidatePath('/en/manager/dashboard')
+    return {}
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
 // ── Delete user ───────────────────────────────────────────────────────────────
 export async function deleteUser(userId: string): Promise<{ error?: string }> {
   try {

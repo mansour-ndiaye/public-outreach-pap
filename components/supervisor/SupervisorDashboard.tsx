@@ -10,10 +10,12 @@ import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
-import { submitEOD } from '@/lib/supabase/eod-actions'
+import { AvatarDisplay } from '@/components/ui/AvatarButton'
+import { createClient } from '@/lib/supabase/client'
+import { submitEOD, fetchPPHLeaderboard } from '@/lib/supabase/eod-actions'
 import type { TerritoryRow } from '@/types'
-import type { DailyZoneRow } from '@/lib/supabase/zone-actions'
-import type { EODEntry } from '@/lib/supabase/eod-actions'
+import type { DailyZoneWithTeam } from '@/lib/supabase/zone-actions'
+import type { EODEntry, RecallEntry, LeaderboardEntry } from '@/lib/supabase/eod-actions'
 
 const TEAM_COLOR_FALLBACK = '#E8174B'
 
@@ -73,25 +75,27 @@ type SpeechRecognitionType = {
 }
 
 interface SupervisorDashboardProps {
-  teamId:         string
-  teamName:       string
-  supervisorId:   string
-  supervisorName: string
-  territory:      TerritoryRow | null
-  todayZones:     DailyZoneRow[]          // all zones for this supervisor today
-  teamZones:      DailyZoneRow[]          // all zones for the team today (incl. other supervisors)
-  todayEOD:       EODEntry | null
-  eodHistory:     EODEntry[]
-  pastStreets:    GeoJSON.FeatureCollection
-  todayDate:      string
-  teamColor?:     string
-  locale?:        string
+  teamId:           string
+  teamName:         string
+  supervisorId:     string
+  supervisorName:   string
+  territory:        TerritoryRow | null
+  todayZones:       DailyZoneWithTeam[]     // zones assigned to THIS supervisor today
+  teamZones:        DailyZoneWithTeam[]     // all zones for the team today (incl. others)
+  todayEOD:         EODEntry | null
+  eodHistory:       EODEntry[]
+  pastStreets:      GeoJSON.FeatureCollection  // own past terrain barré
+  teamPastStreets:  GeoJSON.FeatureCollection  // other supervisors' terrain barré
+  todayDate:        string
+  teamColor?:       string
+  locale?:          string
 }
 
 export default function SupervisorDashboard({
   teamId, teamName, supervisorId, supervisorName,
   territory, todayZones, teamZones,
-  todayEOD: initialEOD, eodHistory, pastStreets, todayDate, teamColor, locale,
+  todayEOD: initialEOD, eodHistory, pastStreets, teamPastStreets,
+  todayDate, teamColor, locale,
 }: SupervisorDashboardProps) {
   const { resolvedTheme } = useTheme()
   const t   = useTranslations('supervisor')
@@ -122,14 +126,18 @@ export default function SupervisorDashboard({
 
   // ── EOD form state ─────────────────────────────────────────────────────────
   const [submittedEOD, setSubmittedEOD] = useState<EODEntry | null>(initialEOD)
-  const [pph,          setPph]          = useState('')
   const [canvasHours,  setCanvasHours]  = useState('')
   const [pacAmount,    setPacAmount]    = useState('')
   const [pacCount,     setPacCount]     = useState('')
-  const [recalls,      setRecalls]      = useState('')
+  const [recalls,      setRecalls]      = useState<RecallEntry[]>([])
+  const [pfu,          setPfu]          = useState('')
   const [fieldNote,    setFieldNote]    = useState('')
   const [formError,    setFormError]    = useState('')
   const [submitSuccess, setSubmitSuccess] = useState(false)
+
+  // ── Team toggle panel ──────────────────────────────────────────────────────
+  const [showTeamPanel,    setShowTeamPanel]    = useState(false)
+  const [hiddenSupervisors, setHiddenSupervisors] = useState<Set<string>>(new Set())
 
   // ── History expand ─────────────────────────────────────────────────────────
   const [expandedEOD, setExpandedEOD]  = useState<string | null>(null)
@@ -165,28 +173,56 @@ export default function SupervisorDashboard({
     return { type: 'FeatureCollection', features: allFeatures }
   }, [todayZones])
 
-  // Other supervisors' zones from same team (team color, thin, 40% opacity)
+  // Other supervisors in the team (for toggle panel, derived from teamZones)
+  const otherSupervisors = useMemo(() => {
+    const seen: Record<string, string> = {}
+    for (const z of teamZones) {
+      if (!z.supervisor_id || z.supervisor_id === supervisorId) continue
+      if (!(z.supervisor_id in seen)) {
+        seen[z.supervisor_id] = z.supervisor_name ?? z.supervisor_id
+      }
+    }
+    return Object.entries(seen).map(([id, name]) => ({ id, name }))
+  }, [teamZones, supervisorId])
+
+  // Other supervisors' terrain du jour (filtered by hiddenSupervisors), RED #ef4444
   const otherZonesGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
     const allFeatures: GeoJSON.Feature[] = []
     for (const z of teamZones) {
-      if (z.supervisor_id === supervisorId) continue  // skip own zones
+      if (z.supervisor_id === supervisorId) continue
+      if (hiddenSupervisors.has(z.supervisor_id ?? '')) continue
       const fc = z.streets as GeoJSON.FeatureCollection
       if (fc?.features) {
         for (const f of fc.features) {
-          allFeatures.push({ ...f, properties: { ...f.properties, zone_id: z.id } })
+          allFeatures.push({
+            ...f,
+            properties: { ...f.properties, zone_id: z.id, supervisor_name: z.supervisor_name },
+          })
         }
       }
     }
     return { type: 'FeatureCollection', features: allFeatures }
-  }, [teamZones, supervisorId])
+  }, [teamZones, supervisorId, hiddenSupervisors])
 
-  // Labels for other supervisors' zones
+  // Other supervisors' terrain barré (past covered streets, filtered by hiddenSupervisors)
+  const filteredTeamPastStreets = useMemo((): GeoJSON.FeatureCollection => {
+    if (!teamPastStreets?.features) return { type: 'FeatureCollection', features: [] }
+    return {
+      type: 'FeatureCollection',
+      features: teamPastStreets.features.filter(f => {
+        const supId = f.properties?.supervisor_id as string | undefined
+        return !supId || !hiddenSupervisors.has(supId)
+      }),
+    }
+  }, [teamPastStreets, hiddenSupervisors])
+
+  // Labels for other supervisors' terrain du jour
   const otherZoneLabels = useMemo(() => {
     const labels: { label: string; center: [number, number] }[] = []
-    // Group by zone_id, pick first line midpoint
     const seen = new Set<string>()
     for (const z of teamZones) {
       if (z.supervisor_id === supervisorId) continue
+      if (hiddenSupervisors.has(z.supervisor_id ?? '')) continue
       if (seen.has(z.id)) continue
       seen.add(z.id)
       const fc = z.streets as GeoJSON.FeatureCollection
@@ -195,10 +231,13 @@ export default function SupervisorDashboard({
       const coords = (firstLine.geometry as GeoJSON.LineString).coordinates
       if (coords.length < 2) continue
       const mid = Math.floor(coords.length / 2)
-      labels.push({ label: z.id, center: [coords[mid][0], coords[mid][1]] })
+      labels.push({
+        label: z.supervisor_name ?? teamName,
+        center: [coords[mid][0], coords[mid][1]],
+      })
     }
     return labels
-  }, [teamZones, supervisorId])
+  }, [teamZones, supervisorId, teamName, hiddenSupervisors])
 
   // Covered streets GeoJSON (session)
   const coveredGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
@@ -216,6 +255,14 @@ export default function SupervisorDashboard({
     const all = [...coveredStreets, ...((submittedEOD?.covered_streets as GeoJSON.FeatureCollection | null)?.features ?? [])]
     return computeProgress(all, assignedFeatures)
   }, [coveredStreets, submittedEOD, todayZoneGeoJSON])
+
+  // PPH = PAC total $ / canvas hours (auto-calculated)
+  const pph = useMemo(() => {
+    const amt = parseFloat(pacAmount)
+    const hrs = parseFloat(canvasHours)
+    if (isNaN(amt) || isNaN(hrs) || hrs <= 0) return NaN
+    return amt / hrs
+  }, [pacAmount, canvasHours])
 
   // Auto-calculated PAC average
   const pacAverage = useMemo(() => {
@@ -354,7 +401,7 @@ export default function SupervisorDashboard({
   const handleSubmitEOD = () => {
     setFormError('')
 
-    if (!pph || !canvasHours || !pacAmount) {
+    if (!canvasHours || !pacAmount) {
       setFormError(t('eod.error_required'))
       return
     }
@@ -375,12 +422,13 @@ export default function SupervisorDashboard({
         team_id:          teamId,
         supervisor_id:    supervisorId,
         entry_date:       todayDate,
-        pph:              parseFloat(pph),
+        pph:              isNaN(pph) ? 0 : pph,
         canvas_hours:     parseFloat(canvasHours),
         pac_total_amount: parseFloat(pacAmount),
         pac_count:        parseInt(pacCount) || 0,
         pac_average:      parseFloat(pacAverage) || 0,
-        recalls_count:    parseInt(recalls) || 0,
+        recalls:          recalls,
+        pfu:              parseInt(pfu) || 0,
         note:             fieldNote,
         covered_streets:  fc,
       })
@@ -395,12 +443,14 @@ export default function SupervisorDashboard({
           team_id: teamId,
           supervisor_id: supervisorId,
           entry_date: todayDate,
-          pph: parseFloat(pph),
+          pph: isNaN(pph) ? 0 : pph,
           canvas_hours: parseFloat(canvasHours),
           pac_total_amount: parseFloat(pacAmount),
           pac_count: parseInt(pacCount) || 0,
           pac_average: parseFloat(pacAverage) || 0,
-          recalls_count: parseInt(recalls) || 0,
+          recalls_count: recalls.length,
+          recalls: recalls,
+          pfu: parseInt(pfu) || 0,
           note: fieldNote || null,
           covered_streets: fc as unknown as GeoJSON.FeatureCollection,
           created_at: new Date().toISOString(),
@@ -472,37 +522,42 @@ export default function SupervisorDashboard({
               <Layer id="territory-line" type="line" paint={{ 'line-color': '#2E3192', 'line-width': 1.5, 'line-opacity': 0.5 }} />
             </Source>
 
-            {/* Past covered streets (gray) */}
+            {/* Own terrain barré — past covered streets (dark green) */}
             <Source id="past-streets" type="geojson" data={pastStreets}>
-              <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#94a3b8', 'line-width': 2, 'line-opacity': 0.4 }} />
+              <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#15803d', 'line-width': 2.5, 'line-opacity': 0.75 }} />
             </Source>
 
-            {/* Other supervisors' zones from same team (team color, thin, 40%) */}
+            {/* Other supervisors' terrain barré (dark red, 50%) */}
+            <Source id="team-past-streets" type="geojson" data={filteredTeamPastStreets}>
+              <Layer id="team-past-streets-line" type="line" paint={{ 'line-color': '#991b1b', 'line-width': 2, 'line-opacity': 0.5 }} />
+            </Source>
+
+            {/* Other supervisors' terrain du jour (red, 60%) */}
             <Source id="other-zones" type="geojson" data={otherZonesGeoJSON}>
               <Layer id="other-zones-line" type="line" paint={{
-                'line-color': teamColor ?? TEAM_COLOR_FALLBACK,
-                'line-width': 2, 'line-opacity': 0.4,
+                'line-color': '#ef4444',
+                'line-width': 3, 'line-opacity': 0.6,
               }} />
             </Source>
 
-            {/* Today assigned zone (teal) — this supervisor's zones */}
+            {/* Own terrain du jour — assigned to this supervisor (green) */}
             <Source id="today-zone" type="geojson" data={todayZoneGeoJSON}>
-              <Layer id="today-zone-line" type="line" paint={{ 'line-color': '#00B5A3', 'line-width': 4, 'line-opacity': 0.85 }} />
+              <Layer id="today-zone-line" type="line" paint={{ 'line-color': '#22c55e', 'line-width': 4, 'line-opacity': 1 }} />
             </Source>
 
-            {/* Covered today (red) */}
+            {/* Drawing in progress (orange) */}
             <Source id="covered" type="geojson" data={coveredGeoJSON}>
-              <Layer id="covered-line" type="line" paint={{ 'line-color': '#E8174B', 'line-width': 3.5, 'line-opacity': 0.9 }} />
+              <Layer id="covered-line" type="line" paint={{ 'line-color': '#f97316', 'line-width': 4, 'line-opacity': 0.95 }} />
             </Source>
 
-            {/* Labels for other supervisors' zones — placeholder, just show zone marker */}
+            {/* Labels for other supervisors' terrain du jour */}
             {otherZoneLabels.map((lbl, i) => (
               <Marker key={i} longitude={lbl.center[0]} latitude={lbl.center[1]} anchor="center">
                 <div
-                  className="px-2 py-0.5 rounded-full text-[9px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap opacity-70"
-                  style={{ backgroundColor: teamColor ?? TEAM_COLOR_FALLBACK }}
+                  className="px-2 py-0.5 rounded-full text-[9px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap opacity-80"
+                  style={{ backgroundColor: '#ef4444' }}
                 >
-                  {teamName}
+                  {lbl.label}
                 </div>
               </Marker>
             ))}
@@ -515,19 +570,74 @@ export default function SupervisorDashboard({
           />
         </div>
 
-        {/* Legend */}
-        <div className="flex flex-wrap items-center gap-4 mt-3 px-1">
-          {[
-            { color: '#2E3192', opacity: '40', label: t('map.legend_territory') },
-            { color: '#00B5A3', opacity: '100', label: t('map.legend_zone') },
-            { color: '#E8174B', opacity: '100', label: t('map.legend_today') },
-            { color: '#94a3b8', opacity: '60', label: t('map.legend_past') },
-          ].map(({ color, label }) => (
-            <div key={label} className="flex items-center gap-1.5">
-              <div className="w-5 h-[3px] rounded-full" style={{ backgroundColor: color }} />
-              <span className="font-body text-xs text-slate-500 dark:text-white/40">{label}</span>
+        {/* Legend + Team Toggle */}
+        <div className="flex items-start justify-between gap-2 mt-3 px-1">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            {[
+              { color: '#2E3192', label: t('map.legend_territory') },
+              { color: '#22c55e', label: t('map.legend_assigned_own') },
+              { color: '#ef4444', label: t('map.legend_assigned_others') },
+              { color: '#15803d', label: t('map.legend_barre_own') },
+              { color: '#991b1b', label: t('map.legend_barre_others') },
+            ].map(({ color, label }) => (
+              <div key={label} className="flex items-center gap-1.5">
+                <div className="w-5 h-[3px] rounded-full" style={{ backgroundColor: color }} />
+                <span className="font-body text-xs text-slate-500 dark:text-white/40">{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Team visibility toggle */}
+          {otherSupervisors.length > 0 && (
+            <div className="relative shrink-0">
+              <button
+                onClick={() => setShowTeamPanel(v => !v)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-body text-xs font-semibold shrink-0',
+                  'border transition-colors duration-150',
+                  showTeamPanel
+                    ? 'bg-brand-navy text-white border-brand-navy'
+                    : 'border-slate-200 text-slate-600 dark:border-white/10 dark:text-white/60 hover:bg-slate-50 dark:hover:bg-white/[0.05]',
+                )}
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <circle cx="9" cy="7" r="4"/><path strokeLinecap="round" strokeLinejoin="round" d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 3.13a4 4 0 0 1 0 7.75M21 21v-2a4 4 0 0 0-3-3.87"/>
+                </svg>
+                {showTeamPanel ? t('map.team_toggle_hide') : t('map.team_toggle_show')}
+              </button>
+              {showTeamPanel && (
+                <div className={cn(
+                  'absolute right-0 top-full mt-1.5 z-10 min-w-[180px]',
+                  'rounded-2xl border border-slate-200 dark:border-white/[0.08]',
+                  'bg-white dark:bg-[#12163a] shadow-lg',
+                  'py-2 px-1',
+                )}>
+                  {otherSupervisors.map(sup => (
+                    <label key={sup.id} className={cn(
+                      'flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer',
+                      'hover:bg-slate-50 dark:hover:bg-white/[0.04] transition-colors',
+                    )}>
+                      <input
+                        type="checkbox"
+                        checked={!hiddenSupervisors.has(sup.id)}
+                        onChange={() => {
+                          setHiddenSupervisors(prev => {
+                            const next = new Set(prev)
+                            if (next.has(sup.id)) next.delete(sup.id)
+                            else next.add(sup.id)
+                            return next
+                          })
+                        }}
+                        className="rounded accent-brand-teal"
+                      />
+                      <span className="font-body text-sm text-brand-navy dark:text-white/80 truncate">{sup.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
+          )}
         </div>
 
         {/* Drawing controls */}
@@ -658,7 +768,8 @@ export default function SupervisorDashboard({
                 { label: 'PPH', value: submittedEOD.pph.toFixed(2) },
                 { label: t('eod.canvas_hours'), value: `${submittedEOD.canvas_hours ?? 0}h` },
                 { label: 'PAC $', value: `$${submittedEOD.pac_total_amount}` },
-                { label: t('eod.recalls'), value: String(submittedEOD.recalls_count) },
+                { label: t('eod.recalls'), value: String(submittedEOD.recalls?.length ?? submittedEOD.recalls_count ?? 0) },
+                { label: t('eod.pfu'), value: String(submittedEOD.pfu ?? 0) },
               ].map(({ label, value }) => (
                 <div key={label} className="rounded-xl bg-white/50 dark:bg-white/[0.05] p-3">
                   <p className="font-body text-[10px] text-slate-500 dark:text-white/40 uppercase tracking-wide">{label}</p>
@@ -680,14 +791,6 @@ export default function SupervisorDashboard({
             )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label={t('eod.pph')} required>
-                <input
-                  type="number" min="0" step="0.01" value={pph}
-                  onChange={e => setPph(e.target.value)}
-                  placeholder="0.00" className={inputCls}
-                />
-              </Field>
-
               <Field label={t('eod.canvas_hours')} required>
                 <input
                   type="number" min="0" step="0.5" value={canvasHours}
@@ -701,6 +804,18 @@ export default function SupervisorDashboard({
                   type="number" min="0" step="0.01" value={pacAmount}
                   onChange={e => setPacAmount(e.target.value)}
                   placeholder="0.00" className={inputCls}
+                />
+              </Field>
+
+              <Field label={locale !== 'en' ? 'PPH = Montant PAC $ / Heures de terrain' : 'PPH = PAC Amount $ / Canvas Hours'}>
+                <input
+                  type="text"
+                  value={!isNaN(pph) ? pph.toFixed(2) : ''}
+                  readOnly
+                  placeholder={locale !== 'en' ? 'Calculé automatiquement' : 'Auto-calculated'}
+                  className={cn(inputCls, 'bg-slate-100/80 dark:bg-white/[0.04] cursor-default',
+                    !isNaN(pph) ? 'text-brand-teal font-semibold' : 'text-slate-400 dark:text-white/30'
+                  )}
                 />
               </Field>
 
@@ -720,14 +835,23 @@ export default function SupervisorDashboard({
                 />
               </Field>
 
-              <Field label={t('eod.recalls')}>
-                <input
-                  type="number" min="0" step="1" value={recalls}
-                  onChange={e => setRecalls(e.target.value)}
-                  placeholder="0" className={inputCls}
-                />
-              </Field>
             </div>
+
+            {/* Recalls list */}
+            <RecallsField
+              recalls={recalls}
+              onChange={setRecalls}
+              locale={locale}
+            />
+
+            {/* PFU — Phone Follow-Up */}
+            <Field label={t('eod.pfu')}>
+              <input
+                type="number" min="0" step="1" value={pfu}
+                onChange={e => setPfu(e.target.value)}
+                placeholder="0" className={inputCls}
+              />
+            </Field>
 
             <Field label={t('eod.note')}>
               <textarea
@@ -813,6 +937,7 @@ export default function SupervisorDashboard({
                           { label: t('history.col_hours'), value: entry.canvas_hours != null ? `${entry.canvas_hours}h` : '—' },
                           { label: t('history.col_pac'), value: entry.pac_total_amount ? `$${entry.pac_total_amount}` : '—' },
                           { label: 'PACs', value: String(entry.pac_count || '—') },
+                          { label: t('history.col_pfu'), value: String(entry.pfu ?? 0) },
                         ].map(({ label, value }) => (
                           <div key={label} className="rounded-xl bg-slate-50 dark:bg-white/[0.04] p-3">
                             <p className="font-body text-[10px] text-slate-500 dark:text-white/40 uppercase tracking-wide">{label}</p>
@@ -822,9 +947,10 @@ export default function SupervisorDashboard({
                       </div>
                       {entry.note && (
                         <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">
-                          "<ExpandableNote note={entry.note} locale={locale} />"
+                          "{entry.note.length > 80 ? entry.note.slice(0, 80) + '…' : entry.note}"
                         </p>
                       )}
+                      <RecallsDisplay recalls={entry.recalls} locale={locale} />
                       {streetCount > 0 && (
                         <p className="font-body text-xs text-slate-400 dark:text-white/30">
                           {streetCount} {t('history.streets_drawn')}
@@ -838,6 +964,9 @@ export default function SupervisorDashboard({
           </div>
         )}
       </section>
+
+      {/* ── SECTION 3: PPH LEADERBOARD ─────────────────────────────────────── */}
+      <PPHLeaderboard supervisorId={supervisorId} locale={locale} />
 
       {/* ── MOBILE drawing bar: fixed bottom bar when drawing on touch device ── */}
       {isTouch && drawMode === 'drawing' && !submittedEOD && (
@@ -893,24 +1022,284 @@ export default function SupervisorDashboard({
   )
 }
 
-// ── Expandable note ────────────────────────────────────────────────────────────
-function ExpandableNote({ note, locale }: { note: string | null; locale?: string }) {
-  const [expanded, setExpanded] = useState(false)
-  if (!note) return null
-  const isLong = note.length > 80
-  const display = !isLong || expanded ? note : note.slice(0, 80) + '…'
+// ── PPH Leaderboard ────────────────────────────────────────────────────────────
+function PPHLeaderboard({ supervisorId, locale }: { supervisorId: string; locale?: string }) {
+  const [period, setPeriod] = useState<'week' | 'all'>('week')
+  const [rows,   setRows]   = useState<LeaderboardEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const data = await fetchPPHLeaderboard(period)
+    setRows(data)
+    setLoading(false)
+  }, [period])
+
+  useEffect(() => { load() }, [load])
+
+  // Realtime: refresh on any daily_entries change
+  useEffect(() => {
+    const supabase = createClient()
+    const channel = supabase
+      .channel('leaderboard-entries')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_entries' }, () => { load() })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [load])
+
+  const rankColors = ['text-yellow-500', 'text-slate-400', 'text-amber-600']
+  const rankIcons  = ['#1', '#2', '#3']
+
   return (
-    <span>
-      {display}
-      {isLong && (
+    <section className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="font-display text-lg font-bold text-brand-navy dark:text-white">
+          {locale !== 'en' ? 'Classement PPH' : 'PPH Rankings'}
+        </h2>
+        <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 shrink-0">
+          {(['week', 'all'] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={cn(
+                'px-3 py-1.5 font-body text-xs font-semibold transition-colors',
+                period === p
+                  ? 'bg-brand-navy text-white'
+                  : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
+              )}
+            >
+              {p === 'week'
+                ? (locale !== 'en' ? '7 jours' : '7 days')
+                : (locale !== 'en' ? 'Tout temps' : 'All time')}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <div className="w-6 h-6 rounded-full border-2 border-brand-teal border-t-transparent animate-spin" />
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="font-body text-sm text-slate-400 dark:text-white/30">
+          {locale !== 'en' ? 'Aucune donnée pour cette période.' : 'No data for this period.'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row, i) => {
+            const isMe = row.supervisor_id === supervisorId
+            return (
+              <div
+                key={row.supervisor_id}
+                className={cn(
+                  'flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all duration-150',
+                  isMe
+                    ? 'bg-brand-navy text-white border-brand-navy'
+                    : 'bg-white dark:bg-white/[0.02] border-slate-200/80 dark:border-white/[0.07]',
+                )}
+              >
+                {/* Rank */}
+                <span className={cn(
+                  'font-display text-sm font-bold w-6 text-center shrink-0',
+                  isMe ? 'text-white/80' : (rankColors[i] ?? 'text-slate-400 dark:text-white/30'),
+                )}>
+                  {rankIcons[i] ?? `#${i + 1}`}
+                </span>
+
+                {/* Avatar */}
+                <AvatarDisplay
+                  name={row.supervisor_name}
+                  avatarUrl={row.avatar_url}
+                  size="xs"
+                  bgClass={isMe ? 'bg-white/20' : 'bg-brand-navy/10 dark:bg-white/10'}
+                  className={isMe ? 'text-[9px] font-bold text-white' : 'text-[9px] font-bold text-brand-navy dark:text-white'}
+                />
+
+                {/* Name + team */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className={cn(
+                      'font-body text-sm font-semibold truncate',
+                      isMe ? 'text-white' : 'text-brand-navy dark:text-white',
+                    )}>
+                      {row.supervisor_name}
+                    </p>
+                    {isMe && (
+                      <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full bg-white/20 font-body text-[9px] font-bold text-white uppercase tracking-wide">
+                        {locale !== 'en' ? 'Vous' : 'You'}
+                      </span>
+                    )}
+                  </div>
+                  {row.team_name && (
+                    <p className={cn(
+                      'font-body text-xs truncate',
+                      isMe ? 'text-white/60' : 'text-slate-400 dark:text-white/30',
+                    )}>
+                      {row.team_name}
+                    </p>
+                  )}
+                </div>
+
+                {/* Stats */}
+                <div className="text-right shrink-0">
+                  <p className={cn(
+                    'font-display text-sm font-bold',
+                    isMe ? 'text-white' : 'text-brand-teal',
+                  )}>
+                    {row.avg_pph.toFixed(2)}
+                  </p>
+                  <p className={cn(
+                    'font-body text-[10px]',
+                    isMe ? 'text-white/50' : 'text-slate-400 dark:text-white/30',
+                  )}>
+                    {row.canvas_hours.toFixed(1)}h
+                  </p>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ── Recalls field (add/remove structured entries) ──────────────────────────────
+function RecallsField({
+  recalls, onChange, locale,
+}: {
+  recalls:  RecallEntry[]
+  onChange: (v: RecallEntry[]) => void
+  locale?:  string
+}) {
+  const [street,     setStreet]     = useState('')
+  const [postalCode, setPostalCode] = useState('')
+  const [numbers,    setNumbers]    = useState('')
+
+  const addEntry = () => {
+    if (!street.trim()) return
+    onChange([...recalls, {
+      street:      street.trim(),
+      postal_code: postalCode.trim(),
+      numbers:     numbers.split(',').map(n => n.trim()).filter(Boolean),
+    }])
+    setStreet('')
+    setPostalCode('')
+    setNumbers('')
+  }
+
+  const removeEntry = (i: number) => onChange(recalls.filter((_, idx) => idx !== i))
+
+  const inputCls = cn(
+    'w-full rounded-xl px-3 py-2.5 font-body text-sm',
+    'bg-slate-50 border border-slate-200 text-slate-900 placeholder:text-slate-400',
+    'dark:bg-white/[0.06] dark:border-white/10 dark:text-white dark:placeholder:text-white/30',
+    'focus-visible:outline-none focus-visible:border-brand-teal focus-visible:ring-2 focus-visible:ring-brand-teal/20',
+    'transition-[border-color,box-shadow] duration-200',
+  )
+
+  return (
+    <div className="space-y-3">
+      <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide">
+        {locale !== 'en' ? 'Rappels' : 'Recalls'} ({recalls.length})
+      </label>
+
+      {/* Existing entries */}
+      {recalls.length > 0 && (
+        <div className="space-y-2">
+          {recalls.map((r, i) => (
+            <div key={i} className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200/80 dark:border-white/[0.07]">
+              <div className="flex-1 min-w-0">
+                <p className="font-body text-sm font-semibold text-brand-navy dark:text-white truncate">{r.street}{r.postal_code ? ` (${r.postal_code})` : ''}</p>
+                {r.numbers.length > 0 && (
+                  <p className="font-body text-xs text-slate-500 dark:text-white/50 mt-0.5">{r.numbers.join(', ')}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => removeEntry(i)}
+                className="p-1 rounded-lg text-slate-400 hover:text-brand-red hover:bg-brand-red/8 transition-colors shrink-0"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add new entry */}
+      <div className="rounded-xl border border-slate-200/80 dark:border-white/[0.07] p-3 space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            type="text" value={street} onChange={e => setStreet(e.target.value)}
+            placeholder={locale !== 'en' ? 'Rue / Avenue' : 'Street / Avenue'}
+            className={inputCls}
+          />
+          <input
+            type="text" value={postalCode} onChange={e => setPostalCode(e.target.value)}
+            placeholder="H2W 2M9"
+            className={inputCls}
+          />
+        </div>
+        <input
+          type="text" value={numbers} onChange={e => setNumbers(e.target.value)}
+          placeholder={locale !== 'en' ? 'Numéros civiques (12, 14, 16)' : 'House numbers (12, 14, 16)'}
+          className={inputCls}
+        />
         <button
-          onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
-          className="ml-1 text-brand-teal hover:underline font-semibold text-xs"
+          type="button"
+          onClick={addEntry}
+          disabled={!street.trim()}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-xl font-body text-xs font-semibold',
+            'bg-brand-navy/8 text-brand-navy dark:bg-white/[0.06] dark:text-white/80',
+            'hover:bg-brand-navy/15 dark:hover:bg-white/[0.10] transition-colors',
+            'disabled:opacity-40 disabled:cursor-not-allowed',
+          )}
         >
-          {expanded ? (locale !== 'en' ? 'Voir moins' : 'See less') : (locale !== 'en' ? 'Voir plus' : 'See more')}
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <line strokeLinecap="round" x1="12" y1="5" x2="12" y2="19"/>
+            <line strokeLinecap="round" x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          {locale !== 'en' ? 'Ajouter un rappel' : 'Add recall'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Recalls display (in history expanded rows) ─────────────────────────────────
+function RecallsDisplay({ recalls, locale }: { recalls: RecallEntry[] | null | undefined; locale?: string }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!recalls || recalls.length === 0) return null
+  const shown = expanded ? recalls : recalls.slice(0, 3)
+  const hasMore = recalls.length > 3
+  return (
+    <div className="space-y-1.5">
+      <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">
+        {locale !== 'en' ? `Rappels (${recalls.length})` : `Recalls (${recalls.length})`}
+      </p>
+      {shown.map((r, i) => (
+        <div key={i} className="font-body text-sm text-slate-600 dark:text-white/60">
+          <span className="font-semibold text-brand-navy dark:text-white/80">{r.street}</span>
+          {r.postal_code ? <span className="text-slate-400 dark:text-white/30"> ({r.postal_code})</span> : null}
+          {r.numbers.length > 0 ? <span>: {r.numbers.join(', ')}</span> : null}
+        </div>
+      ))}
+      {hasMore && (
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="font-body text-xs text-brand-teal hover:underline"
+        >
+          {expanded
+            ? (locale !== 'en' ? 'Voir moins' : 'See less')
+            : (locale !== 'en' ? `Voir ${recalls.length - 3} de plus` : `See ${recalls.length - 3} more`)}
         </button>
       )}
-    </span>
+    </div>
   )
 }
 
