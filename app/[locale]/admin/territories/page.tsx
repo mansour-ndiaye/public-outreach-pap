@@ -1,5 +1,6 @@
 import nextDynamic from 'next/dynamic'
 import { fetchTerritories, fetchTeams } from '@/lib/supabase/territory-actions'
+import { fetchAllCoveredStreets } from '@/lib/supabase/eod-actions'
 import type { TerritoryRow, TeamRow } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -20,14 +21,15 @@ const TerritoriesMap = nextDynamic(
 )
 
 export default async function AdminTerritoriesPage() {
-  const [territories, teams] = await Promise.all([
+  const [territories, teams, allCoveredStreets] = await Promise.all([
     fetchTerritories() as Promise<TerritoryRow[]>,
     fetchTeams()       as Promise<TeamRow[]>,
+    fetchAllCoveredStreets(),
   ])
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <TerritoriesMap territories={territories} teams={teams} />
+      <TerritoriesMap territories={territories} teams={teams} allCoveredStreets={allCoveredStreets} />
     </div>
   )
 }

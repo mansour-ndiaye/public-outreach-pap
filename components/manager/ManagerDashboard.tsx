@@ -33,14 +33,15 @@ type TeamOption = { id: string; name: string }
 type Tab = 'map' | 'teams' | 'performance'
 
 interface ManagerDashboardProps {
-  territories:  TerritoryRow[]
-  teams:        TeamOption[]
-  zones:        DailyZoneWithTeam[]
-  zoneStatuses: TeamZoneStatus[]
-  recentEODs:   EODWithTeam[]
-  todayDate:    string
-  locale?:      string
-  isAdmin?:     boolean
+  territories:       TerritoryRow[]
+  teams:             TeamOption[]
+  zones:             DailyZoneWithTeam[]
+  zoneStatuses:      TeamZoneStatus[]
+  recentEODs:        EODWithTeam[]
+  allCoveredStreets?: GeoJSON.FeatureCollection
+  todayDate:         string
+  locale?:           string
+  isAdmin?:          boolean
 }
 
 function formatDate(dateStr: string) {
@@ -70,7 +71,7 @@ function TruncatedNote({ note }: { note: string | null }) {
 }
 
 export default function ManagerDashboard({
-  territories, teams, zones, zoneStatuses, recentEODs, todayDate, locale, isAdmin,
+  territories, teams, zones, zoneStatuses, recentEODs, allCoveredStreets, todayDate, locale, isAdmin,
 }: ManagerDashboardProps) {
   const t = useTranslations('manager')
   const [tab, setTab] = useState<Tab>('map')
@@ -211,6 +212,7 @@ export default function ManagerDashboard({
             territories={territories}
             teams={teams}
             zones={zones}
+            allCoveredStreets={allCoveredStreets}
             todayDate={todayDate}
             teamColorMap={teamColorMap}
             locale={locale}

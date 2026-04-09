@@ -85,6 +85,7 @@
       "map_lock_hint": "Touchez pour activer la carte",
       "legend_territories": "Zones",
       "legend_today": "Terrains du jour",
+      "legend_barre": "Terrain barré",
       "legend_past": "Terrains précédents",
       "legend_drawing": "En cours de dessin",
       "ai_title": "Assistant IA",
@@ -137,6 +138,10 @@
       "title": "Superviseur",
       "logout": "Déconnexion"
     },
+    "tabs": {
+      "dashboard": "Tableau de bord",
+      "ranking": "Classement"
+    },
     "map": {
       "title": "Terrain du jour",
       "no_zone": "Aucun terrain du jour assigné. Contactez votre gestionnaire.",
@@ -164,7 +169,10 @@
       "ai_retry": "Réessayer",
       "ai_drawing": "Géocodage en cours...",
       "ai_no_results": "Aucun résultat trouvé pour cette rue",
-      "mic_label": "Dicter les rues"
+      "mic_label": "Dicter les rues",
+      "your_turf": "Votre terrain",
+      "legend_barre": "Terrain barré",
+      "no_turf_assigned": "Aucun terrain assigné pour aujourd'hui"
     },
     "eod": {
       "title": "Rapport de fin de journée",

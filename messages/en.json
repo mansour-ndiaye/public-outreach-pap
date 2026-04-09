@@ -85,6 +85,7 @@
       "map_lock_hint": "Tap to activate map",
       "legend_territories": "Zones",
       "legend_today": "Daily turfs",
+      "legend_barre": "Completed turf",
       "legend_past": "Past turfs",
       "legend_drawing": "Currently drawing",
       "ai_title": "AI Assistant",
@@ -137,6 +138,10 @@
       "title": "Supervisor",
       "logout": "Log out"
     },
+    "tabs": {
+      "dashboard": "Dashboard",
+      "ranking": "Rankings"
+    },
     "map": {
       "title": "Daily Turf",
       "no_zone": "No daily turf assigned for today. Contact your manager.",
@@ -164,7 +169,10 @@
       "ai_retry": "Retry",
       "ai_drawing": "Geocoding...",
       "ai_no_results": "No results found for this street",
-      "mic_label": "Dictate streets"
+      "mic_label": "Dictate streets",
+      "your_turf": "Your turf",
+      "legend_barre": "Completed turf",
+      "no_turf_assigned": "No turf assigned for today"
     },
     "eod": {
       "title": "End of Day Report",

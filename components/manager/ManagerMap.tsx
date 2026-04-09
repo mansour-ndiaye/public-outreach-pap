@@ -31,12 +31,13 @@ type SpeechRecognitionType = {
 }
 
 interface ManagerMapProps {
-  territories:  TerritoryRow[]
-  teams:        TeamOption[]
-  zones:        DailyZoneWithTeam[]
-  todayDate:    string
-  teamColorMap: Record<string, string>
-  locale?:      string
+  territories:       TerritoryRow[]
+  teams:             TeamOption[]
+  zones:             DailyZoneWithTeam[]
+  allCoveredStreets?: GeoJSON.FeatureCollection
+  todayDate:         string
+  teamColorMap:      Record<string, string>
+  locale?:           string
 }
 
 function getColor(map: Record<string, string>, teamId: string) {
@@ -108,7 +109,7 @@ function buildDrawingGeoJSON(
 }
 
 export default function ManagerMap({
-  territories, teams, zones, todayDate, teamColorMap, locale,
+  territories, teams, zones, allCoveredStreets, todayDate, teamColorMap, locale,
 }: ManagerMapProps) {
   const { resolvedTheme } = useTheme()
   const t = useTranslations('manager.map')
@@ -151,6 +152,9 @@ export default function ManagerMap({
   const [aiError,      setAiError]      = useState('')
   const [isRecording,  setIsRecording]  = useState(false)
 
+  // Terrain barré hover tooltip
+  const [barreHover, setBarreHover] = useState<{ supervisor_name: string; date: string; lng: number; lat: number } | null>(null)
+
   // Detect touch device + show hint
   useEffect(() => {
     const touch = window.matchMedia('(pointer: coarse)').matches
@@ -192,14 +196,16 @@ export default function ManagerMap({
 
   const territoriesGeoJSON = useMemo(() => buildTerritoriesGeoJSON(territories), [territories])
 
-  const pastZonesGeoJSON = useMemo(
-    () => buildZonesGeoJSON(zones, teamColorMap, z => z.date !== todayDate),
-    [zones, teamColorMap, todayDate],
-  )
-
+  // Today's terrain du jour — all supervisors, green #22c55e
   const todayZonesGeoJSON = useMemo(
     () => buildZonesGeoJSON(zones, teamColorMap, z => z.date === todayDate),
     [zones, teamColorMap, todayDate],
+  )
+
+  // Covered streets (terrain barré) — always black
+  const coveredStreetsGeoJSON = useMemo(
+    (): GeoJSON.FeatureCollection => allCoveredStreets ?? { type: 'FeatureCollection', features: [] },
+    [allCoveredStreets],
   )
 
   const drawingGeoJSON = useMemo(
@@ -211,6 +217,22 @@ export default function ManagerMap({
     if (drawMode !== 'drawing') return
     const { lng, lat } = e.lngLat
     setCurrentLine(prev => [...prev, [lng, lat]])
+  }, [drawMode])
+
+  const handleMouseMove = useCallback((e: MapMouseEvent) => {
+    if (drawMode === 'drawing') { setBarreHover(null); return }
+    const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line'] })
+    if (features?.length) {
+      const f = features[0]
+      setBarreHover({
+        supervisor_name: (f.properties?.supervisor_name as string | null) ?? '—',
+        date:            (f.properties?.date as string | null) ?? '—',
+        lng:             e.lngLat.lng,
+        lat:             e.lngLat.lat,
+      })
+    } else {
+      setBarreHover(null)
+    }
   }, [drawMode])
 
   useEffect(() => {
@@ -452,12 +474,14 @@ export default function ManagerMap({
         mapStyle={mapStyleUrl}
         cursor={cursor}
         onClick={handleMapClick}
+        onMouseMove={handleMouseMove}
         onLoad={() => setMapLoaded(true)}
       >
         <NavigationControl position="top-right" />
 
+        {/* Zone polygons — Navy #2E3192 */}
         <Source id="territories" type="geojson" data={territoriesGeoJSON}>
-          <Layer id="territories-fill" type="fill" paint={{ 'fill-color': '#2E3192', 'fill-opacity': 0.12 }} />
+          <Layer id="territories-fill" type="fill" paint={{ 'fill-color': '#2E3192', 'fill-opacity': 0.10 }} />
           <Layer id="territories-line" type="line" paint={{ 'line-color': '#2E3192', 'line-width': 2, 'line-opacity': 0.6 }} />
         </Source>
 
@@ -469,30 +493,43 @@ export default function ManagerMap({
           </Marker>
         ))}
 
-        <Source id="past-zones" type="geojson" data={pastZonesGeoJSON}>
-          <Layer id="past-zones-line" type="line" paint={{ 'line-color': '#94a3b8', 'line-width': 1.5, 'line-opacity': 0.45 }} />
+        {/* Terrain barré — bold black #000000 */}
+        <Source id="covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
+          <Layer id="covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
         </Source>
 
+        {/* Terrain du jour — green #22c55e */}
         <Source id="today-zones" type="geojson" data={todayZonesGeoJSON}>
-          <Layer id="today-zones-line" type="line" paint={{ 'line-color': ['get', 'color'], 'line-width': 3.5, 'line-opacity': 0.9 }} />
+          <Layer id="today-zones-line" type="line" paint={{ 'line-color': '#22c55e', 'line-width': 3.5, 'line-opacity': 0.9 }} />
         </Source>
 
         {todayZoneLabels.map((lbl, i) => (
           <Marker key={i} longitude={lbl.center[0]} latitude={lbl.center[1]} anchor="center">
-            <div className="px-2 py-0.5 rounded-full text-[10px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap" style={{ backgroundColor: lbl.color }}>
+            <div className="px-2 py-0.5 rounded-full text-[10px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap" style={{ backgroundColor: '#22c55e' }}>
               {lbl.label}
             </div>
           </Marker>
         ))}
 
+        {/* Drawing in progress — orange #f97316 */}
         {drawMode === 'drawing' && (
           <Source id="drawing" type="geojson" data={drawingGeoJSON}>
             <Layer id="drawing-line" type="line" paint={{
-              'line-color': ['coalesce', ['get', 'color'], '#2E3192'],
-              'line-width': 3, 'line-opacity': 0.85,
+              'line-color': '#f97316',
+              'line-width': 4, 'line-opacity': 0.95,
               'line-dasharray': ['literal', [2, 1]],
             }} />
           </Source>
+        )}
+
+        {/* Hover tooltip for terrain barré */}
+        {barreHover && (
+          <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
+            <div className="mb-2 px-3 py-1.5 rounded-xl bg-brand-navy text-white font-body text-xs shadow-lg pointer-events-none whitespace-nowrap">
+              <p className="font-semibold">{barreHover.supervisor_name}</p>
+              <p className="opacity-70">{barreHover.date}</p>
+            </div>
+          </Marker>
         )}
       </Map>
 
@@ -532,16 +569,16 @@ export default function ManagerMap({
         'text-xs font-body space-y-1.5',
       )}>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-2 rounded-full bg-brand-navy/40 border border-brand-navy/60" />
+          <div className="w-6 h-2 rounded-full bg-[#2E3192]/40 border border-[#2E3192]/60" />
           <span className="text-slate-600 dark:text-white/60">{t('legend_territories')}</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-[3px] rounded-full" style={{ backgroundColor: TEAM_COLORS[0] }} />
+          <div className="w-6 h-[3px] rounded-full bg-[#22c55e]" />
           <span className="text-slate-600 dark:text-white/60">{t('legend_today')}</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-[2px] rounded-full bg-slate-400/50" />
-          <span className="text-slate-600 dark:text-white/60">{t('legend_past')}</span>
+          <div className="w-6 h-[4px] rounded-full bg-black" />
+          <span className="text-slate-600 dark:text-white/60">{t('legend_barre')}</span>
         </div>
       </div>
 

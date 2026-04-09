@@ -138,11 +138,12 @@ function polygonCentroid(rings: number[][][]): [number, number] {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 interface Props {
-  territories: TerritoryRow[]
-  teams: TeamRow[]
+  territories:       TerritoryRow[]
+  teams:             TeamRow[]
+  allCoveredStreets?: GeoJSON.FeatureCollection
 }
 
-export function TerritoriesMap({ territories: initialTerritories, teams }: Props) {
+export function TerritoriesMap({ territories: initialTerritories, teams, allCoveredStreets }: Props) {
   const mapRef = useRef<MapRef>(null)
   const { resolvedTheme } = useTheme()
   const t = useTranslations('admin.territories')
@@ -164,6 +165,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
   const [saveCoords, setSaveCoords] = useState<number[][][] | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TerritoryRow | null>(null)
   const [tooltipInfo, setTooltipInfo] = useState<{ name: string; lng: number; lat: number } | null>(null)
+  const [barreHover, setBarreHover] = useState<{ supervisor_name: string; date: string; lng: number; lat: number } | null>(null)
 
   // ── Refs for freehand (avoid stale closures in raw event handlers) ───────────
   const freehandRef = useRef<{ drawing: boolean; pts: [number, number][] }>({
@@ -363,8 +365,22 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
       const feat = e.features?.[0]
       if (feat?.properties?.name) {
         setTooltipInfo({ name: feat.properties.name as string, lng: e.lngLat.lng, lat: e.lngLat.lat })
+        setBarreHover(null)
       } else {
         setTooltipInfo(null)
+        // Check for covered streets hover
+        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line'] })
+        if (barreFeatures?.length) {
+          const f = barreFeatures[0]
+          setBarreHover({
+            supervisor_name: (f.properties?.supervisor_name as string | null) ?? '—',
+            date:            (f.properties?.date as string | null) ?? '—',
+            lng:             e.lngLat.lng,
+            lat:             e.lngLat.lat,
+          })
+        } else {
+          setBarreHover(null)
+        }
       }
     }
   }, [drawMode, isTouch, draftPoints.length])
@@ -414,6 +430,11 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
   const previewGJ = useMemo(
     () => previewGeoJSON(draftPoints, hoverLngLat, freehandPath),
     [draftPoints, hoverLngLat, freehandPath],
+  )
+
+  const coveredStreetsGeoJSON = useMemo(
+    (): GeoJSON.FeatureCollection => allCoveredStreets ?? { type: 'FeatureCollection', features: [] },
+    [allCoveredStreets],
   )
 
   const isDrawing = drawMode !== 'idle'
@@ -505,6 +526,21 @@ export function TerritoriesMap({ territories: initialTerritories, teams }: Props
             <Layer id="territories-fill"    type="fill" paint={fillPaint} />
             <Layer id="territories-outline" type="line" paint={outlinePaint} />
           </Source>
+
+          {/* Terrain barré — bold black #000000 */}
+          <Source id="admin-covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
+            <Layer id="admin-covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
+          </Source>
+
+          {/* Hover tooltip for terrain barré */}
+          {barreHover && (
+            <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
+              <div className="mb-2 px-3 py-1.5 rounded-xl bg-brand-navy text-white font-body text-xs shadow-lg pointer-events-none whitespace-nowrap">
+                <p className="font-semibold">{barreHover.supervisor_name}</p>
+                <p className="opacity-70">{barreHover.date}</p>
+              </div>
+            </Marker>
+          )}
 
           {/* Drawing preview */}
           <Source id="preview" type="geojson" data={previewGJ}>

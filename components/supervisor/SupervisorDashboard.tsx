@@ -139,6 +139,9 @@ export default function SupervisorDashboard({
   const [showTeamPanel,    setShowTeamPanel]    = useState(false)
   const [hiddenSupervisors, setHiddenSupervisors] = useState<Set<string>>(new Set())
 
+  // ── Tab navigation ─────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ranking'>('dashboard')
+
   // ── History expand ─────────────────────────────────────────────────────────
   const [expandedEOD, setExpandedEOD]  = useState<string | null>(null)
 
@@ -238,6 +241,20 @@ export default function SupervisorDashboard({
     }
     return labels
   }, [teamZones, supervisorId, teamName, hiddenSupervisors])
+
+  // Centroid for "Votre terrain" label on own terrain du jour
+  const myTurfLabelCenter = useMemo((): [number, number] | null => {
+    for (const z of todayZones) {
+      const fc = z.streets as GeoJSON.FeatureCollection
+      const firstLine = fc?.features?.find(f => f.geometry.type === 'LineString')
+      if (!firstLine) continue
+      const coords = (firstLine.geometry as GeoJSON.LineString).coordinates
+      if (coords.length < 2) continue
+      const mid = Math.floor(coords.length / 2)
+      return [coords[mid][0], coords[mid][1]]
+    }
+    return null
+  }, [todayZones])
 
   // Covered streets GeoJSON (session)
   const coveredGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
@@ -405,7 +422,7 @@ export default function SupervisorDashboard({
       setFormError(t('eod.error_required'))
       return
     }
-    if (coveredStreets.length === 0 && currentLine.length < 2) {
+    if (todayZones.length > 0 && coveredStreets.length === 0 && currentLine.length < 2) {
       setFormError(t('eod.error_streets'))
       return
     }
@@ -462,7 +479,36 @@ export default function SupervisorDashboard({
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6 space-y-8">
+    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+
+      {/* ── Tab navigation ──────────────────────────────────────────────────── */}
+      <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 self-start w-fit">
+        {([
+          { key: 'dashboard', label: t('tabs.dashboard') },
+          { key: 'ranking',   label: t('tabs.ranking') },
+        ] as { key: 'dashboard' | 'ranking'; label: string }[]).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={cn(
+              'px-4 py-2 font-body text-sm font-semibold transition-colors',
+              activeTab === tab.key
+                ? 'bg-brand-navy text-white'
+                : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── RANKING TAB ─────────────────────────────────────────────────────── */}
+      {activeTab === 'ranking' && (
+        <PPHLeaderboard supervisorId={supervisorId} locale={locale} />
+      )}
+
+      {/* ── DASHBOARD TAB ───────────────────────────────────────────────────── */}
+      {activeTab === 'dashboard' && <>
 
       {/* ── SECTION 1: MAP ─────────────────────────────────────────────────── */}
       <section>
@@ -522,14 +568,14 @@ export default function SupervisorDashboard({
               <Layer id="territory-line" type="line" paint={{ 'line-color': '#2E3192', 'line-width': 1.5, 'line-opacity': 0.5 }} />
             </Source>
 
-            {/* Own terrain barré — past covered streets (dark green) */}
+            {/* Terrain barré — all covered streets in bold black #000000 */}
             <Source id="past-streets" type="geojson" data={pastStreets}>
-              <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#15803d', 'line-width': 2.5, 'line-opacity': 0.75 }} />
+              <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
             </Source>
 
-            {/* Other supervisors' terrain barré (dark red, 50%) */}
+            {/* Other supervisors' terrain barré — also bold black */}
             <Source id="team-past-streets" type="geojson" data={filteredTeamPastStreets}>
-              <Layer id="team-past-streets-line" type="line" paint={{ 'line-color': '#991b1b', 'line-width': 2, 'line-opacity': 0.5 }} />
+              <Layer id="team-past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
             </Source>
 
             {/* Other supervisors' terrain du jour (red, 60%) */}
@@ -549,6 +595,15 @@ export default function SupervisorDashboard({
             <Source id="covered" type="geojson" data={coveredGeoJSON}>
               <Layer id="covered-line" type="line" paint={{ 'line-color': '#f97316', 'line-width': 4, 'line-opacity': 0.95 }} />
             </Source>
+
+            {/* "Votre terrain" label on own terrain du jour */}
+            {myTurfLabelCenter && (
+              <Marker longitude={myTurfLabelCenter[0]} latitude={myTurfLabelCenter[1]} anchor="center">
+                <div className="px-2 py-0.5 rounded-full text-[9px] font-bold font-body text-white shadow-sm pointer-events-none whitespace-nowrap" style={{ backgroundColor: '#22c55e' }}>
+                  {t('map.your_turf')}
+                </div>
+              </Marker>
+            )}
 
             {/* Labels for other supervisors' terrain du jour */}
             {otherZoneLabels.map((lbl, i) => (
@@ -577,8 +632,7 @@ export default function SupervisorDashboard({
               { color: '#2E3192', label: t('map.legend_territory') },
               { color: '#22c55e', label: t('map.legend_assigned_own') },
               { color: '#ef4444', label: t('map.legend_assigned_others') },
-              { color: '#15803d', label: t('map.legend_barre_own') },
-              { color: '#991b1b', label: t('map.legend_barre_others') },
+              { color: '#000000', label: t('map.legend_barre') },
             ].map(({ color, label }) => (
               <div key={label} className="flex items-center gap-1.5">
                 <div className="w-5 h-[3px] rounded-full" style={{ backgroundColor: color }} />
@@ -640,8 +694,13 @@ export default function SupervisorDashboard({
           )}
         </div>
 
-        {/* Drawing controls */}
-        {!submittedEOD && (
+        {/* Drawing controls — only when terrain du jour is assigned */}
+        {!submittedEOD && todayZones.length === 0 && (
+          <div className="mt-4 rounded-2xl border border-slate-200 dark:border-white/[0.07] px-4 py-3 font-body text-sm text-slate-500 dark:text-white/40">
+            {t('map.no_turf_assigned')}
+          </div>
+        )}
+        {!submittedEOD && todayZones.length > 0 && (
           <div className="mt-4 space-y-3">
             <p className="font-body text-xs text-slate-500 dark:text-white/40 font-semibold uppercase tracking-wide">
               {isTouch
@@ -965,8 +1024,7 @@ export default function SupervisorDashboard({
         )}
       </section>
 
-      {/* ── SECTION 3: PPH LEADERBOARD ─────────────────────────────────────── */}
-      <PPHLeaderboard supervisorId={supervisorId} locale={locale} />
+      </>}
 
       {/* ── MOBILE drawing bar: fixed bottom bar when drawing on touch device ── */}
       {isTouch && drawMode === 'drawing' && !submittedEOD && (

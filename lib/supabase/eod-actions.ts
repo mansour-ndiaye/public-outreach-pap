@@ -217,6 +217,50 @@ export async function fetchTeamPastCoveredStreets(
   return { type: 'FeatureCollection', features: allFeatures }
 }
 
+// ── Get ALL covered streets (terrain barré) across all teams/supervisors ──────
+export async function fetchAllCoveredStreets(): Promise<GeoJSON.FeatureCollection> {
+  const supabase = createClient()
+
+  const { data: entries } = await supabase
+    .from('daily_entries')
+    .select('covered_streets, supervisor_id, entry_date')
+    .not('covered_streets', 'is', null)
+    .order('entry_date', { ascending: false })
+    .limit(300)
+
+  const rawEntries = (entries ?? []) as { covered_streets: GeoJSON.FeatureCollection | null; supervisor_id: string | null; entry_date: string }[]
+
+  const supIds = Array.from(new Set(rawEntries.map(e => e.supervisor_id).filter(Boolean) as string[]))
+  const supNames = new Map<string, string>()
+  if (supIds.length > 0) {
+    const { data: sups } = await supabase
+      .from('users')
+      .select('id, full_name, email')
+      .in('id', supIds)
+    for (const s of (sups ?? []) as { id: string; full_name: string | null; email: string }[]) {
+      supNames.set(s.id, s.full_name || s.email)
+    }
+  }
+
+  const allFeatures: GeoJSON.Feature[] = []
+  for (const row of rawEntries) {
+    if (row.covered_streets?.features) {
+      for (const f of row.covered_streets.features) {
+        allFeatures.push({
+          ...f,
+          properties: {
+            ...f.properties,
+            supervisor_name: row.supervisor_id ? (supNames.get(row.supervisor_id) ?? null) : null,
+            date:            row.entry_date,
+          },
+        })
+      }
+    }
+  }
+
+  return { type: 'FeatureCollection', features: allFeatures }
+}
+
 // ── Get today's EOD submission for a supervisor ───────────────────────────────
 export async function fetchTodayEOD(supervisorId: string, date: string): Promise<EODEntry | null> {
   const supabase = createClient()
