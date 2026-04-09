@@ -821,7 +821,9 @@ export default function SupervisorDashboard({
                         ))}
                       </div>
                       {entry.note && (
-                        <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">"{entry.note}"</p>
+                        <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">
+                          "<ExpandableNote note={entry.note} locale={locale} />"
+                        </p>
                       )}
                       {streetCount > 0 && (
                         <p className="font-body text-xs text-slate-400 dark:text-white/30">
@@ -888,6 +890,27 @@ export default function SupervisorDashboard({
       )}
 
     </div>
+  )
+}
+
+// ── Expandable note ────────────────────────────────────────────────────────────
+function ExpandableNote({ note, locale }: { note: string | null; locale?: string }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!note) return null
+  const isLong = note.length > 80
+  const display = !isLong || expanded ? note : note.slice(0, 80) + '…'
+  return (
+    <span>
+      {display}
+      {isLong && (
+        <button
+          onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
+          className="ml-1 text-brand-teal hover:underline font-semibold text-xs"
+        >
+          {expanded ? (locale !== 'en' ? 'Voir moins' : 'See less') : (locale !== 'en' ? 'Voir plus' : 'See more')}
+        </button>
+      )}
+    </span>
   )
 }
 

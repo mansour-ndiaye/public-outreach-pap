@@ -2,6 +2,7 @@ import { fetchTerritories } from '@/lib/supabase/territory-actions'
 import { fetchDailyZones, fetchTeamsWithZoneStatus } from '@/lib/supabase/zone-actions'
 import { fetchRecentEODs } from '@/lib/supabase/eod-actions'
 import { createClient } from '@/lib/supabase/server'
+import { getCurrentUser } from '@/lib/supabase/actions'
 import ManagerDashboard from '@/components/manager/ManagerDashboard'
 
 export const dynamic = 'force-dynamic'
@@ -19,13 +20,16 @@ async function fetchTeams() {
 export default async function ManagerDashboardPage({ params: { locale } }: Props) {
   const today = new Date().toISOString().split('T')[0]
 
-  const [territories, teams, zones, zoneStatuses, recentEODs] = await Promise.all([
+  const [user, territories, teams, zones, zoneStatuses, recentEODs] = await Promise.all([
+    getCurrentUser(),
     fetchTerritories(),
     fetchTeams(),
     fetchDailyZones(),
     fetchTeamsWithZoneStatus(today),
     fetchRecentEODs(100),
   ])
+
+  const isAdmin = user?.role === 'admin'
 
   return (
     <div className="h-full">
@@ -37,6 +41,7 @@ export default async function ManagerDashboardPage({ params: { locale } }: Props
         recentEODs={recentEODs}
         todayDate={today}
         locale={locale}
+        isAdmin={isAdmin}
       />
     </div>
   )

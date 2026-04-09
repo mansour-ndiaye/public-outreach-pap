@@ -1,0 +1,13 @@
+{
+  "name": "Public Outreach PAP",
+  "short_name": "PAP",
+  "icons": [
+    { "src": "/assets/logo.jpeg", "sizes": "192x192", "type": "image/jpeg" },
+    { "src": "/assets/logo.jpeg", "sizes": "512x512", "type": "image/jpeg" }
+  ],
+  "theme_color": "#2E3192",
+  "background_color": "#2E3192",
+  "display": "standalone",
+  "start_url": "/",
+  "orientation": "portrait"
+}

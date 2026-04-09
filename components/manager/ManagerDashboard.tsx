@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import Link from 'next/link'
 import nextDynamic from 'next/dynamic'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
@@ -31,18 +32,25 @@ type TeamOption = { id: string; name: string }
 type Tab = 'map' | 'teams' | 'performance'
 
 interface ManagerDashboardProps {
-  territories:    TerritoryRow[]
-  teams:          TeamOption[]
-  zones:          DailyZoneWithTeam[]
-  zoneStatuses:   TeamZoneStatus[]
-  recentEODs:     EODWithTeam[]
-  todayDate:      string
-  locale?:        string
+  territories:  TerritoryRow[]
+  teams:        TeamOption[]
+  zones:        DailyZoneWithTeam[]
+  zoneStatuses: TeamZoneStatus[]
+  recentEODs:   EODWithTeam[]
+  todayDate:    string
+  locale?:      string
+  isAdmin?:     boolean
 }
 
 function formatDate(dateStr: string) {
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('fr-CA', {
     month: 'short', day: 'numeric',
+  })
+}
+
+function formatDateLong(dateStr: string) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('fr-CA', {
+    weekday: 'short', month: 'short', day: 'numeric',
   })
 }
 
@@ -54,14 +62,41 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('')
 }
 
+// ── Expandable note ────────────────────────────────────────────────────────────
+function ExpandableNote({ note, locale }: { note: string | null; locale?: string }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!note) return <span className="text-slate-400 dark:text-white/30">—</span>
+  const short = note.length > 80
+  const display = !short || expanded ? note : note.slice(0, 80) + '…'
+  return (
+    <span>
+      {display}
+      {short && (
+        <button
+          onClick={e => { e.stopPropagation(); setExpanded(v => !v) }}
+          className="ml-1 text-brand-teal hover:underline font-semibold text-xs"
+        >
+          {expanded
+            ? (locale !== 'en' ? 'Voir moins' : 'See less')
+            : (locale !== 'en' ? 'Voir plus' : 'See more')}
+        </button>
+      )}
+    </span>
+  )
+}
+
 export default function ManagerDashboard({
-  territories, teams, zones, zoneStatuses, recentEODs, todayDate, locale,
+  territories, teams, zones, zoneStatuses, recentEODs, todayDate, locale, isAdmin,
 }: ManagerDashboardProps) {
-  const t     = useTranslations('manager')
+  const t = useTranslations('manager')
   const [tab, setTab] = useState<Tab>('map')
 
   // Performance tab: supervisor filter
   const [filterSupervisor, setFilterSupervisor] = useState('')
+
+  // Supervisor detail slide-over
+  const [detailSupervisorId, setDetailSupervisorId] = useState<string | null>(null)
+  const [expandedEOD, setExpandedEOD] = useState<string | null>(null)
 
   // Teams tab: expanded rows
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set())
@@ -78,19 +113,15 @@ export default function ManagerDashboard({
   const teamColorMap = useMemo(() => {
     const map: Record<string, string> = {}
     const sorted = [...teams].sort((a, b) => a.name.localeCompare(b.name))
-    sorted.forEach((team, i) => {
-      map[team.id] = TEAM_COLORS[i % TEAM_COLORS.length]
-    })
+    sorted.forEach((team, i) => { map[team.id] = TEAM_COLORS[i % TEAM_COLORS.length] })
     return map
   }, [teams])
 
   // Unique supervisors across all EODs (for filter dropdown)
   const supervisorOptions = useMemo(() => {
-    const map = new Map<string, string>() // supervisor_id → name
+    const map = new Map<string, string>()
     for (const e of recentEODs) {
-      if (e.supervisor_id && e.supervisor_name) {
-        map.set(e.supervisor_id, e.supervisor_name)
-      }
+      if (e.supervisor_id && e.supervisor_name) map.set(e.supervisor_id, e.supervisor_name)
     }
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
   }, [recentEODs])
@@ -112,16 +143,33 @@ export default function ManagerDashboard({
     const totalHours = weekEntries.reduce((s, e) => s + (e.canvas_hours ?? 0), 0)
     const pphs       = weekEntries.map(e => e.pph).filter(Boolean)
     const avgPph     = pphs.length ? pphs.reduce((a, b) => a + b, 0) / pphs.length : 0
-
-    // Active supervisors today = unique supervisor_ids with an EOD today
     const activeSupervisorsToday = new Set(
-      recentEODs
-        .filter(e => e.entry_date === todayDate && e.supervisor_id)
-        .map(e => e.supervisor_id!)
+      recentEODs.filter(e => e.entry_date === todayDate && e.supervisor_id).map(e => e.supervisor_id!)
     ).size
-
     return { totalPac, totalHours, avgPph, activeSupervisorsToday }
   }, [recentEODs, todayDate])
+
+  // Supervisor detail data
+  const detailSupervisor = useMemo(() => {
+    if (!detailSupervisorId) return null
+    const eods = recentEODs.filter(e => e.supervisor_id === detailSupervisorId)
+    if (!eods.length) return null
+    const name = eods[0].supervisor_name ?? detailSupervisorId
+    const teamName = eods[0].team_name ?? '—'
+    const teamId = eods[0].team_id ?? ''
+
+    const now = new Date()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+    const monthEODs = eods.filter(e => (e.entry_date ?? '') >= monthStart)
+    const totalPacMonth = monthEODs.reduce((s, e) => s + (e.pac_count ?? 0), 0)
+    const totalHours = eods.reduce((s, e) => s + (e.canvas_hours ?? 0), 0)
+    const pphs = eods.map(e => e.pph).filter(Boolean)
+    const avgPph = pphs.length ? pphs.reduce((a, b) => a + b, 0) / pphs.length : 0
+    const bestPph = pphs.length ? Math.max(...pphs) : 0
+    const bestPphDate = eods.find(e => e.pph === bestPph)?.entry_date ?? null
+
+    return { name, teamName, teamId, eods, totalPacMonth, totalHours, avgPph, bestPph, bestPphDate }
+  }, [detailSupervisorId, recentEODs])
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'map',         label: t('tabs.map') },
@@ -130,7 +178,22 @@ export default function ManagerDashboard({
   ]
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
+
+      {/* Admin back button */}
+      {isAdmin && (
+        <div className="shrink-0 px-4 py-2 bg-white/70 dark:bg-white/[0.03] border-b border-slate-200/60 dark:border-white/[0.05]">
+          <Link
+            href={`/${locale}/admin/dashboard`}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold font-body text-slate-500 dark:text-white/50 hover:text-brand-navy dark:hover:text-white transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 12H5M12 5l-7 7 7 7" />
+            </svg>
+            {locale !== 'en' ? 'Retour au tableau de bord' : 'Back to dashboard'}
+          </Link>
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className={cn(
@@ -185,22 +248,14 @@ export default function ManagerDashboard({
                   const anyAssigned = team.supervisors.some(s => s.zone_assigned)
                   return (
                     <div key={team.team_id} className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-white/[0.07]">
-                      {/* Team header row */}
                       <button
                         onClick={() => toggleTeam(team.team_id)}
                         className="w-full flex items-center gap-3 px-4 py-3.5 bg-slate-50 dark:bg-white/[0.03] hover:bg-slate-100 dark:hover:bg-white/[0.05] transition-colors text-left"
                       >
-                        <div
-                          className="w-3 h-3 rounded-full shrink-0"
-                          style={{ backgroundColor: teamColorMap[team.team_id] ?? '#94a3b8' }}
-                        />
-                        <span className="font-semibold font-body text-brand-navy dark:text-white flex-1">
-                          {team.team_name}
-                        </span>
+                        <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: teamColorMap[team.team_id] ?? '#94a3b8' }} />
+                        <span className="font-semibold font-body text-brand-navy dark:text-white flex-1">{team.team_name}</span>
                         {team.territory_name && (
-                          <span className="font-body text-xs text-slate-400 dark:text-white/40 hidden sm:block">
-                            {team.territory_name}
-                          </span>
+                          <span className="font-body text-xs text-slate-400 dark:text-white/40 hidden sm:block">{team.territory_name}</span>
                         )}
                         <span className={cn(
                           'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold',
@@ -213,15 +268,10 @@ export default function ManagerDashboard({
                             ? `${team.supervisors.filter(s => s.zone_assigned).length}/${team.supervisors.length} assigné${team.supervisors.filter(s => s.zone_assigned).length > 1 ? 's' : ''}`
                             : (locale !== 'en' ? 'Non assignée' : 'Not assigned')}
                         </span>
-                        <svg
-                          className={cn('w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0', isExpanded && 'rotate-180')}
-                          fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
-                        >
+                        <svg className={cn('w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0', isExpanded && 'rotate-180')} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                         </svg>
                       </button>
-
-                      {/* Supervisor rows (expanded) */}
                       {isExpanded && (
                         <div className="divide-y divide-slate-100 dark:divide-white/[0.04]">
                           {team.supervisors.length === 0 ? (
@@ -231,36 +281,23 @@ export default function ManagerDashboard({
                           ) : (
                             team.supervisors.map(sup => (
                               <div key={sup.supervisor_id} className="flex items-center gap-3 px-5 py-3 bg-white dark:bg-transparent hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors">
-                                {/* Avatar */}
                                 <div className="w-8 h-8 rounded-full bg-brand-navy/10 dark:bg-white/10 flex items-center justify-center shrink-0">
-                                  <span className="font-body text-xs font-bold text-brand-navy dark:text-white">
-                                    {initials(sup.supervisor_name)}
-                                  </span>
+                                  <span className="font-body text-xs font-bold text-brand-navy dark:text-white">{initials(sup.supervisor_name)}</span>
                                 </div>
-                                {/* Name */}
-                                <span className="flex-1 font-body text-sm text-slate-700 dark:text-white/80 min-w-0 truncate">
-                                  {sup.supervisor_name}
-                                </span>
-                                {/* Zone status */}
+                                <span className="flex-1 font-body text-sm text-slate-700 dark:text-white/80 min-w-0 truncate">{sup.supervisor_name}</span>
                                 <span className={cn(
                                   'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap',
                                   sup.zone_assigned
                                     ? 'bg-brand-teal/10 text-brand-teal border border-brand-teal/25'
                                     : 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-white/[0.05] dark:text-white/40 dark:border-white/10',
                                 )}>
-                                  {sup.zone_assigned
-                                    ? (locale !== 'en' ? 'Assignée ✓' : 'Assigned ✓')
-                                    : (locale !== 'en' ? 'Non assignée' : 'Not assigned')}
+                                  {sup.zone_assigned ? (locale !== 'en' ? 'Assignée ✓' : 'Assigned ✓') : (locale !== 'en' ? 'Non assignée' : 'Not assigned')}
                                 </span>
-                                {/* Last EOD */}
                                 <span className="font-body text-xs text-slate-400 dark:text-white/30 hidden sm:block whitespace-nowrap">
                                   {sup.last_eod_date ? formatDate(sup.last_eod_date) : '—'}
                                 </span>
-                                {/* PPH */}
                                 {sup.last_pph != null ? (
-                                  <span className="font-body text-xs font-semibold text-brand-teal hidden sm:block whitespace-nowrap">
-                                    {sup.last_pph.toFixed(2)} PPH
-                                  </span>
+                                  <span className="font-body text-xs font-semibold text-brand-teal hidden sm:block whitespace-nowrap">{sup.last_pph.toFixed(2)} PPH</span>
                                 ) : (
                                   <span className="hidden sm:block text-slate-300 dark:text-white/20 text-xs">—</span>
                                 )}
@@ -302,7 +339,6 @@ export default function ManagerDashboard({
                 <h3 className="font-display text-base font-semibold text-brand-navy dark:text-white">
                   {t('performance.recent_eods')}
                 </h3>
-                {/* Supervisor filter */}
                 {supervisorOptions.length > 0 && (
                   <select
                     value={filterSupervisor}
@@ -348,24 +384,22 @@ export default function ManagerDashboard({
                             <td className="px-4 py-3">
                               {eod.team_name ? (
                                 <div className="flex items-center gap-2">
-                                  <div
-                                    className="w-2.5 h-2.5 rounded-full shrink-0"
-                                    style={{ backgroundColor: teamColorMap[eod.team_id ?? ''] ?? '#94a3b8' }}
-                                  />
+                                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: teamColorMap[eod.team_id ?? ''] ?? '#94a3b8' }} />
                                   <span className="font-semibold text-brand-navy dark:text-white">{eod.team_name}</span>
                                 </div>
                               ) : '—'}
                             </td>
                             <td className="px-4 py-3">
                               {eod.supervisor_name ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 rounded-full bg-brand-navy/10 dark:bg-white/10 flex items-center justify-center shrink-0">
-                                    <span className="font-body text-[9px] font-bold text-brand-navy dark:text-white">
-                                      {initials(eod.supervisor_name)}
-                                    </span>
+                                <button
+                                  onClick={() => { setDetailSupervisorId(eod.supervisor_id ?? null); setExpandedEOD(null) }}
+                                  className="flex items-center gap-2 group"
+                                >
+                                  <div className="w-6 h-6 rounded-full bg-brand-navy/10 dark:bg-white/10 flex items-center justify-center shrink-0 group-hover:bg-brand-teal/20 transition-colors">
+                                    <span className="font-body text-[9px] font-bold text-brand-navy dark:text-white">{initials(eod.supervisor_name)}</span>
                                   </div>
-                                  <span className="text-slate-700 dark:text-white/70 text-xs">{eod.supervisor_name}</span>
-                                </div>
+                                  <span className="text-slate-700 dark:text-white/70 text-xs group-hover:text-brand-teal transition-colors">{eod.supervisor_name}</span>
+                                </button>
                               ) : <span className="text-slate-400 dark:text-white/30">—</span>}
                             </td>
                             <td className="px-4 py-3 font-semibold text-brand-navy dark:text-brand-teal">
@@ -377,8 +411,8 @@ export default function ManagerDashboard({
                             <td className="px-4 py-3 text-slate-600 dark:text-white/60">
                               {eod.pac_total_amount ? formatCurrency(eod.pac_total_amount) : '—'}
                             </td>
-                            <td className="px-4 py-3 text-slate-500 dark:text-white/40 max-w-[200px] truncate">
-                              {eod.note || t('performance.no_note')}
+                            <td className="px-4 py-3 text-slate-500 dark:text-white/40 max-w-[220px]">
+                              <ExpandableNote note={eod.note} locale={locale} />
                             </td>
                           </tr>
                         ))}
@@ -392,6 +426,141 @@ export default function ManagerDashboard({
         )}
 
       </div>
+
+      {/* ── SUPERVISOR DETAIL SLIDE-OVER ─────────────────────────────────────── */}
+      {detailSupervisor && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 z-40 bg-black/40 backdrop-blur-sm"
+            onClick={() => setDetailSupervisorId(null)}
+          />
+          {/* Panel */}
+          <div className={cn(
+            'absolute inset-y-0 right-0 z-50 w-full sm:w-[420px]',
+            'bg-white dark:bg-[#12163a] flex flex-col',
+            'border-l border-slate-200/80 dark:border-white/[0.08] shadow-2xl',
+            'animate-slide-left',
+          )}>
+            {/* Header */}
+            <div className="flex items-center gap-4 px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.07] shrink-0">
+              <div className="w-12 h-12 rounded-full bg-brand-navy flex items-center justify-center text-white font-display font-bold text-lg select-none shrink-0">
+                {initials(detailSupervisor.name)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-display text-base font-bold text-brand-navy dark:text-white truncate">{detailSupervisor.name}</p>
+                <p className="font-body text-xs text-slate-500 dark:text-white/50">{detailSupervisor.teamName}</p>
+              </div>
+              <button
+                onClick={() => setDetailSupervisorId(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors shrink-0"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Stats summary */}
+            <div className="px-5 py-4 grid grid-cols-2 gap-3 shrink-0 border-b border-slate-200/60 dark:border-white/[0.07]">
+              <MiniStat
+                label={locale !== 'en' ? 'PACs ce mois' : 'PACs this month'}
+                value={String(detailSupervisor.totalPacMonth)}
+                accent="navy"
+              />
+              <MiniStat label={locale !== 'en' ? 'PPH moyen' : 'Avg PPH'} value={detailSupervisor.avgPph.toFixed(2)} accent="teal" />
+              <MiniStat
+                label={locale !== 'en' ? 'Heures terrain' : 'Canvas hours'}
+                value={detailSupervisor.totalHours.toFixed(1) + 'h'}
+                accent="slate"
+              />
+              <MiniStat
+                label={locale !== 'en' ? `Meilleur PPH${detailSupervisor.bestPphDate ? ' (' + formatDate(detailSupervisor.bestPphDate) + ')' : ''}` : `Best PPH${detailSupervisor.bestPphDate ? ' (' + formatDate(detailSupervisor.bestPphDate) + ')' : ''}`}
+                value={detailSupervisor.bestPph.toFixed(2)}
+                accent="red"
+              />
+            </div>
+
+            {/* EOD history */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+              <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide mb-3">
+                {locale !== 'en' ? 'Historique EOD' : 'EOD History'} ({detailSupervisor.eods.length})
+              </p>
+              {detailSupervisor.eods.length === 0 ? (
+                <p className="font-body text-sm text-slate-400 dark:text-white/30">{t('performance.empty')}</p>
+              ) : (
+                detailSupervisor.eods.map(eod => {
+                  const isExpanded = expandedEOD === eod.id
+                  const covered = eod.covered_streets as GeoJSON.FeatureCollection | null
+                  const streetCount = covered?.features?.length ?? 0
+                  return (
+                    <div key={eod.id} className="rounded-xl border border-slate-200/80 dark:border-white/[0.07] overflow-hidden bg-white dark:bg-white/[0.02]">
+                      <button
+                        onClick={() => setExpandedEOD(isExpanded ? null : eod.id)}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-white/[0.03] transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3">
+                            <span className="font-body text-sm font-semibold text-brand-navy dark:text-white whitespace-nowrap">
+                              {eod.entry_date ? formatDateLong(eod.entry_date) : '—'}
+                            </span>
+                            <span className="font-body text-sm font-bold text-brand-teal">
+                              {eod.pph?.toFixed(2)} PPH
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 mt-0.5">
+                            <span className="font-body text-xs text-slate-400 dark:text-white/30">
+                              {eod.canvas_hours != null ? `${eod.canvas_hours}h` : ''}
+                            </span>
+                            {eod.pac_total_amount ? (
+                              <span className="font-body text-xs text-slate-500 dark:text-white/40">
+                                {formatCurrency(eod.pac_total_amount)}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <svg
+                          className={cn('w-4 h-4 text-slate-400 transition-transform duration-200 shrink-0', isExpanded && 'rotate-180')}
+                          fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="px-4 pb-4 pt-2 border-t border-slate-100 dark:border-white/[0.04] space-y-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              { label: 'PPH', value: eod.pph?.toFixed(2) ?? '—' },
+                              { label: locale !== 'en' ? 'Heures' : 'Hours', value: eod.canvas_hours != null ? `${eod.canvas_hours}h` : '—' },
+                              { label: 'PAC $', value: eod.pac_total_amount ? formatCurrency(eod.pac_total_amount) : '—' },
+                              { label: 'PACs', value: String(eod.pac_count || '—') },
+                            ].map(({ label, value }) => (
+                              <div key={label} className="rounded-lg bg-slate-50 dark:bg-white/[0.04] p-2.5">
+                                <p className="font-body text-[10px] text-slate-500 dark:text-white/40 uppercase tracking-wide">{label}</p>
+                                <p className="font-display text-sm font-bold text-brand-navy dark:text-white">{value}</p>
+                              </div>
+                            ))}
+                          </div>
+                          {eod.note && (
+                            <p className="font-body text-sm text-slate-600 dark:text-white/60 italic leading-relaxed">"{eod.note}"</p>
+                          )}
+                          {streetCount > 0 && (
+                            <p className="font-body text-xs text-slate-400 dark:text-white/30">
+                              {streetCount} {locale !== 'en' ? 'rue(s) couvertes' : 'street(s) covered'}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
     </div>
   )
 }
@@ -409,12 +578,29 @@ function StatCard({ label, value, accent }: {
     slate: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-white/[0.05] dark:text-white dark:border-white/10',
   }
   return (
-    <div className={cn(
-      'rounded-2xl border p-5',
-      accentMap[accent],
-    )}>
+    <div className={cn('rounded-2xl border p-5', accentMap[accent])}>
       <p className="font-body text-xs font-semibold uppercase tracking-wide opacity-60 mb-1 leading-tight">{label}</p>
       <p className="font-display text-2xl font-bold">{value}</p>
+    </div>
+  )
+}
+
+// ── Mini stat card (for supervisor detail panel) ───────────────────────────────
+function MiniStat({ label, value, accent }: {
+  label: string
+  value: string
+  accent: 'navy' | 'teal' | 'red' | 'slate'
+}) {
+  const accentMap = {
+    navy:  'text-brand-navy dark:text-white',
+    teal:  'text-brand-teal',
+    red:   'text-brand-red',
+    slate: 'text-slate-600 dark:text-white/70',
+  }
+  return (
+    <div className="rounded-xl bg-slate-50 dark:bg-white/[0.04] p-3">
+      <p className="font-body text-[10px] text-slate-400 dark:text-white/40 uppercase tracking-wide leading-tight mb-0.5">{label}</p>
+      <p className={cn('font-display text-lg font-bold', accentMap[accent])}>{value}</p>
     </div>
   )
 }

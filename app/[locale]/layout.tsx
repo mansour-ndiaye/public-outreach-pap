@@ -11,6 +11,15 @@ export const dynamic = 'force-dynamic'
 export const metadata: Metadata = {
   title: 'Public Outreach — Territory Management',
   description: 'PAP Territory Management Application for Public Outreach field teams.',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'PAP',
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 }
 
 interface LocaleLayoutProps {
@@ -29,7 +38,11 @@ export default async function LocaleLayout({ children, params: { locale } }: Loc
 
   return (
     <html lang={locale} suppressHydrationWarning>
-      <head />
+      <head>
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/assets/logo.jpeg" />
+        <meta name="theme-color" content="#2E3192" />
+      </head>
       <body>
         <ThemeProvider
           attribute="class"

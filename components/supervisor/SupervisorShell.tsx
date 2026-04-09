@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { LocaleToggle } from '@/components/ui/LocaleToggle'
@@ -41,7 +42,7 @@ export function SupervisorShell({ children, user, locale }: SupervisorShellProps
         'sticky top-0 z-30',
       )}>
         {/* Left: Logo + role */}
-        <div className="flex items-center gap-3">
+        <Link href={`/${locale}/supervisor/dashboard`} className="flex items-center gap-3 hover:opacity-80 transition-opacity">
           <Image src="/assets/logo.jpeg" alt="PO" width={30} height={30} className="rounded-full shrink-0" />
           <div className="hidden sm:block">
             <p className="font-display text-sm font-bold text-brand-navy dark:text-white leading-tight">
@@ -51,7 +52,7 @@ export function SupervisorShell({ children, user, locale }: SupervisorShellProps
               {t('title')}
             </p>
           </div>
-        </div>
+        </Link>
 
         {/* Right: user + controls */}
         <div className="flex items-center gap-2">

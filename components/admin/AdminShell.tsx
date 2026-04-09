@@ -106,12 +106,12 @@ export function AdminShell({ children, user, locale }: AdminShellProps) {
     <div className="flex flex-col h-full w-60 bg-brand-navy shrink-0">
 
       {/* Logo */}
-      <div className="flex items-center gap-3 px-5 h-16 border-b border-white/10 shrink-0">
+      <Link href={`/${locale}/admin/dashboard`} className="flex items-center gap-3 px-5 h-16 border-b border-white/10 shrink-0 hover:bg-white/5 transition-colors">
         <Image src="/assets/logo.jpeg" alt="PO" width={30} height={30} className="rounded-full" />
         <span className="font-display text-sm font-semibold text-white tracking-wide leading-tight">
           Public Outreach
         </span>
-      </div>
+      </Link>
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
