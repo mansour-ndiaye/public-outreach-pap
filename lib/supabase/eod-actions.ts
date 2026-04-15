@@ -181,35 +181,72 @@ export async function fetchTeamPastCoveredStreets(
 
   const { data: entries } = await supabase
     .from('daily_entries')
-    .select('covered_streets, supervisor_id, entry_date')
+    .select('covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
     .in('supervisor_id', memberIds)
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
-    .limit(14 * memberIds.length)
+    .limit(30 * memberIds.length)
 
-  // Resolve supervisor names
+  return enrichCoveredStreets(supabase, (entries ?? []) as CoveredStreetEntry[])
+}
+
+type CoveredStreetEntry = {
+  covered_streets: GeoJSON.FeatureCollection | null
+  supervisor_id:   string | null
+  team_id:         string | null
+  entry_date:      string
+  pph:             number
+  canvas_hours:    number | null
+  pac_count:       number
+  pac_total_amount: number
+  pfu:             number
+  recalls_count:   number
+  note:            string | null
+}
+
+async function enrichCoveredStreets(
+  supabase: ReturnType<typeof createClient>,
+  entries: CoveredStreetEntry[],
+): Promise<GeoJSON.FeatureCollection> {
+  const supIds = Array.from(new Set(entries.map(e => e.supervisor_id).filter(Boolean) as string[]))
+  const teamIds = Array.from(new Set(entries.map(e => e.team_id).filter(Boolean) as string[]))
+
   const supNames = new Map<string, string>()
-  const { data: sups } = await supabase
-    .from('users')
-    .select('id, full_name, email')
-    .in('id', memberIds)
-  for (const s of (sups ?? []) as { id: string; full_name: string | null; email: string }[]) {
-    supNames.set(s.id, s.full_name || s.email)
+  if (supIds.length > 0) {
+    const { data: sups } = await supabase
+      .from('users').select('id, full_name, email').in('id', supIds)
+    for (const s of (sups ?? []) as { id: string; full_name: string | null; email: string }[]) {
+      supNames.set(s.id, s.full_name || s.email)
+    }
+  }
+
+  const teamNames = new Map<string, string>()
+  if (teamIds.length > 0) {
+    const { data: teams } = await supabase
+      .from('teams').select('id, name').in('id', teamIds)
+    for (const tm of (teams ?? []) as { id: string; name: string }[]) {
+      teamNames.set(tm.id, tm.name)
+    }
   }
 
   const allFeatures: GeoJSON.Feature[] = []
-  for (const row of (entries ?? []) as { covered_streets: GeoJSON.FeatureCollection | null; supervisor_id: string | null; entry_date: string }[]) {
+  for (const row of entries) {
     if (row.covered_streets?.features) {
+      const props = {
+        supervisor_name:  row.supervisor_id ? (supNames.get(row.supervisor_id) ?? null) : null,
+        team_name:        row.team_id ? (teamNames.get(row.team_id) ?? null) : null,
+        date:             row.entry_date,
+        pph:              row.pph,
+        canvas_hours:     row.canvas_hours,
+        pac_count:        row.pac_count,
+        pac_total_amount: row.pac_total_amount,
+        pfu:              row.pfu,
+        recalls_count:    row.recalls_count,
+        note:             row.note,
+        streets_count:    row.covered_streets.features.length,
+      }
       for (const f of row.covered_streets.features) {
-        allFeatures.push({
-          ...f,
-          properties: {
-            ...f.properties,
-            supervisor_id:   row.supervisor_id,
-            supervisor_name: row.supervisor_id ? (supNames.get(row.supervisor_id) ?? null) : null,
-            date:            row.entry_date,
-          },
-        })
+        allFeatures.push({ ...f, properties: { ...f.properties, ...props } })
       }
     }
   }
@@ -223,42 +260,12 @@ export async function fetchAllCoveredStreets(): Promise<GeoJSON.FeatureCollectio
 
   const { data: entries } = await supabase
     .from('daily_entries')
-    .select('covered_streets, supervisor_id, entry_date')
+    .select('covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
     .limit(300)
 
-  const rawEntries = (entries ?? []) as { covered_streets: GeoJSON.FeatureCollection | null; supervisor_id: string | null; entry_date: string }[]
-
-  const supIds = Array.from(new Set(rawEntries.map(e => e.supervisor_id).filter(Boolean) as string[]))
-  const supNames = new Map<string, string>()
-  if (supIds.length > 0) {
-    const { data: sups } = await supabase
-      .from('users')
-      .select('id, full_name, email')
-      .in('id', supIds)
-    for (const s of (sups ?? []) as { id: string; full_name: string | null; email: string }[]) {
-      supNames.set(s.id, s.full_name || s.email)
-    }
-  }
-
-  const allFeatures: GeoJSON.Feature[] = []
-  for (const row of rawEntries) {
-    if (row.covered_streets?.features) {
-      for (const f of row.covered_streets.features) {
-        allFeatures.push({
-          ...f,
-          properties: {
-            ...f.properties,
-            supervisor_name: row.supervisor_id ? (supNames.get(row.supervisor_id) ?? null) : null,
-            date:            row.entry_date,
-          },
-        })
-      }
-    }
-  }
-
-  return { type: 'FeatureCollection', features: allFeatures }
+  return enrichCoveredStreets(supabase, (entries ?? []) as CoveredStreetEntry[])
 }
 
 // ── Get today's EOD submission for a supervisor ───────────────────────────────
@@ -296,22 +303,13 @@ export async function fetchPastCoveredStreets(supervisorId: string): Promise<Geo
 
   const { data } = await supabase
     .from('daily_entries')
-    .select('covered_streets, entry_date')
+    .select('covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
     .eq('supervisor_id', supervisorId)
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
-    .limit(14) // last 2 weeks
+    .limit(30)
 
-  const allFeatures: GeoJSON.Feature[] = []
-  for (const row of (data ?? []) as { covered_streets: GeoJSON.FeatureCollection | null; entry_date: string }[]) {
-    if (row.covered_streets?.features) {
-      for (const f of row.covered_streets.features) {
-        allFeatures.push({ ...f, properties: { ...f.properties, date: row.entry_date } })
-      }
-    }
-  }
-
-  return { type: 'FeatureCollection', features: allFeatures }
+  return enrichCoveredStreets(supabase, (data ?? []) as CoveredStreetEntry[])
 }
 
 // ── Submit EOD (one per supervisor per day) ───────────────────────────────────

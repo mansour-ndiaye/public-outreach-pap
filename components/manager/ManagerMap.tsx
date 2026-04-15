@@ -9,6 +9,7 @@ import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { createDailyZone, fetchSupervisorsForTeam } from '@/lib/supabase/zone-actions'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
+import { BarrePopup } from '@/components/ui/BarrePopup'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam, SupervisorOption } from '@/lib/supabase/zone-actions'
 
@@ -153,7 +154,12 @@ export default function ManagerMap({
   const [isRecording,  setIsRecording]  = useState(false)
 
   // Terrain barré hover tooltip
-  const [barreHover, setBarreHover] = useState<{ supervisor_name: string; date: string; lng: number; lat: number } | null>(null)
+  const [barreHover, setBarreHover] = useState<{
+    supervisor_name: string; team_name: string | null; date: string
+    pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
+    pfu: number; recalls_count: number; note: string | null; streets_count: number
+    lng: number; lat: number
+  } | null>(null)
 
   // Detect touch device + show hint
   useEffect(() => {
@@ -223,12 +229,21 @@ export default function ManagerMap({
     if (drawMode === 'drawing') { setBarreHover(null); return }
     const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line'] })
     if (features?.length) {
-      const f = features[0]
+      const p = features[0].properties ?? {}
       setBarreHover({
-        supervisor_name: (f.properties?.supervisor_name as string | null) ?? '—',
-        date:            (f.properties?.date as string | null) ?? '—',
-        lng:             e.lngLat.lng,
-        lat:             e.lngLat.lat,
+        supervisor_name:  (p.supervisor_name as string | null) ?? '—',
+        team_name:        (p.team_name as string | null) ?? null,
+        date:             (p.date as string | null) ?? '—',
+        pph:              Number(p.pph ?? 0),
+        canvas_hours:     p.canvas_hours != null ? Number(p.canvas_hours) : null,
+        pac_count:        Number(p.pac_count ?? 0),
+        pac_total_amount: Number(p.pac_total_amount ?? 0),
+        pfu:              Number(p.pfu ?? 0),
+        recalls_count:    Number(p.recalls_count ?? 0),
+        note:             (p.note as string | null) ?? null,
+        streets_count:    Number(p.streets_count ?? 0),
+        lng:              e.lngLat.lng,
+        lat:              e.lngLat.lat,
       })
     } else {
       setBarreHover(null)
@@ -493,9 +508,9 @@ export default function ManagerMap({
           </Marker>
         ))}
 
-        {/* Terrain barré — bold black #000000 */}
+        {/* Terrain barré — black #000000 */}
         <Source id="covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
-          <Layer id="covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
+          <Layer id="covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
         </Source>
 
         {/* Terrain du jour — green #22c55e */}
@@ -522,13 +537,10 @@ export default function ManagerMap({
           </Source>
         )}
 
-        {/* Hover tooltip for terrain barré */}
+        {/* Terrain barré popup */}
         {barreHover && (
           <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
-            <div className="mb-2 px-3 py-1.5 rounded-xl bg-brand-navy text-white font-body text-xs shadow-lg pointer-events-none whitespace-nowrap">
-              <p className="font-semibold">{barreHover.supervisor_name}</p>
-              <p className="opacity-70">{barreHover.date}</p>
-            </div>
+            <BarrePopup info={barreHover} onClose={() => setBarreHover(null)} />
           </Marker>
         )}
       </Map>
@@ -582,13 +594,13 @@ export default function ManagerMap({
         </div>
       </div>
 
-      {/* Mobile map lock/unlock */}
+      {/* Mobile map lock/unlock — positioned below the Assign Zone button */}
       {!panelOpen && isTouch && drawMode === 'idle' && (
         <button
           onClick={() => setMapLocked(prev => !prev)}
           className={cn(
-            'absolute top-4 right-4 z-10',
-            'flex items-center gap-2 px-3 h-11 rounded-xl',
+            'absolute top-[64px] right-4 z-20',
+            'flex items-center gap-2 px-3 h-9 rounded-xl',
             'backdrop-blur-sm border shadow-md',
             'font-body text-xs font-medium transition-colors',
             mapLocked
@@ -614,7 +626,7 @@ export default function ManagerMap({
       {/* Mobile lock hint */}
       {showLockHint && (
         <div className={cn(
-          'absolute inset-x-4 top-20 z-10',
+          'absolute inset-x-4 top-28 z-10',
           'flex items-center justify-center',
           'bg-brand-navy/90 backdrop-blur-sm text-white',
           'rounded-xl border border-white/10 shadow-lg',

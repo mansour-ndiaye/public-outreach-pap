@@ -60,7 +60,8 @@
     "tabs": {
       "map": "Carte",
       "teams": "Équipes",
-      "performance": "Performance"
+      "performance": "Performance",
+      "ranking": "Classement"
     },
     "map": {
       "assign_btn": "Assigner un terrain",
@@ -216,6 +217,7 @@
       "territories": "Zones",
       "teams": "Équipes",
       "manager_dashboard": "Tableau gestionnaire",
+      "ranking": "Classement",
       "settings": "Paramètres",
       "logout": "Déconnexion"
     },

@@ -60,7 +60,8 @@
     "tabs": {
       "map": "Map",
       "teams": "Teams",
-      "performance": "Performance"
+      "performance": "Performance",
+      "ranking": "Rankings"
     },
     "map": {
       "assign_btn": "Assign turf",
@@ -216,6 +217,7 @@
       "territories": "Zones",
       "teams": "Teams",
       "manager_dashboard": "Manager Dashboard",
+      "ranking": "Rankings",
       "settings": "Settings",
       "logout": "Log out"
     },

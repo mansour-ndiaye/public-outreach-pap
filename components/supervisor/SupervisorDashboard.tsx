@@ -9,13 +9,17 @@ import Map, {
 import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
+import nextDynamic from 'next/dynamic'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
-import { AvatarDisplay } from '@/components/ui/AvatarButton'
-import { createClient } from '@/lib/supabase/client'
-import { submitEOD, fetchPPHLeaderboard } from '@/lib/supabase/eod-actions'
+import { BarrePopup } from '@/components/ui/BarrePopup'
+import type { BarrePopupInfo } from '@/components/ui/BarrePopup'
+import { PPHLeaderboard } from '@/components/ui/PPHLeaderboard'
+
+const EodMiniMap = nextDynamic(() => import('@/components/ui/EodMiniMap'), { ssr: false })
+import { submitEOD } from '@/lib/supabase/eod-actions'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam } from '@/lib/supabase/zone-actions'
-import type { EODEntry, RecallEntry, LeaderboardEntry } from '@/lib/supabase/eod-actions'
+import type { EODEntry, RecallEntry } from '@/lib/supabase/eod-actions'
 
 const TEAM_COLOR_FALLBACK = '#E8174B'
 
@@ -138,6 +142,7 @@ export default function SupervisorDashboard({
   // ── Team toggle panel ──────────────────────────────────────────────────────
   const [showTeamPanel,    setShowTeamPanel]    = useState(false)
   const [hiddenSupervisors, setHiddenSupervisors] = useState<Set<string>>(new Set())
+  const [barreHover, setBarreHover] = useState<(BarrePopupInfo & { lng: number; lat: number }) | null>(null)
 
   // ── Tab navigation ─────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'dashboard' | 'ranking'>('dashboard')
@@ -294,6 +299,37 @@ export default function SupervisorDashboard({
     if (drawMode !== 'drawing') return
     const { lng, lat } = e.lngLat
     setCurrentLine(prev => [...prev, [lng, lat]])
+  }, [drawMode])
+
+  const handleBarreMouseMove = useCallback((e: MapMouseEvent) => {
+    if (drawMode === 'drawing') return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+    const features = map.queryRenderedFeatures(e.point, {
+      layers: ['past-streets-line', 'team-past-streets-line'],
+    })
+    if (features.length > 0) {
+      const p = features[0].properties ?? {}
+      setBarreHover({
+        supervisor_name:  p.supervisor_name  ?? '',
+        team_name:        p.team_name        ?? null,
+        date:             p.entry_date       ?? '',
+        pph:              Number(p.pph)      || 0,
+        canvas_hours:     p.canvas_hours != null ? Number(p.canvas_hours) : null,
+        pac_count:        Number(p.pac_count)        || 0,
+        pac_total_amount: Number(p.pac_total_amount) || 0,
+        pfu:              Number(p.pfu)              || 0,
+        recalls_count:    Number(p.recalls_count)    || 0,
+        note:             p.note ?? null,
+        streets_count:    Number(p.streets_count)    || 0,
+        lng: e.lngLat.lng,
+        lat: e.lngLat.lat,
+      })
+      setCursor('pointer')
+    } else {
+      setBarreHover(null)
+      setCursor('grab')
+    }
   }, [drawMode])
 
   useEffect(() => {
@@ -559,6 +595,8 @@ export default function SupervisorDashboard({
             mapStyle={mapStyleUrl}
             cursor={cursor}
             onClick={handleMapClick}
+            onMouseMove={handleBarreMouseMove}
+            onMouseLeave={() => { setBarreHover(null); setCursor(drawMode === 'drawing' ? 'crosshair' : 'grab' as string) }}
           >
             <NavigationControl position="top-right" />
 
@@ -568,14 +606,14 @@ export default function SupervisorDashboard({
               <Layer id="territory-line" type="line" paint={{ 'line-color': '#2E3192', 'line-width': 1.5, 'line-opacity': 0.5 }} />
             </Source>
 
-            {/* Terrain barré — all covered streets in bold black #000000 */}
+            {/* Terrain barré — all covered streets in black #000000 */}
             <Source id="past-streets" type="geojson" data={pastStreets}>
-              <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
+              <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
             </Source>
 
-            {/* Other supervisors' terrain barré — also bold black */}
+            {/* Other supervisors' terrain barré — also black */}
             <Source id="team-past-streets" type="geojson" data={filteredTeamPastStreets}>
-              <Layer id="team-past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
+              <Layer id="team-past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
             </Source>
 
             {/* Other supervisors' terrain du jour (red, 60%) */}
@@ -616,6 +654,13 @@ export default function SupervisorDashboard({
                 </div>
               </Marker>
             ))}
+
+            {/* Terrain barré hover popup */}
+            {barreHover && (
+              <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
+                <BarrePopup info={barreHover} onClose={() => setBarreHover(null)} />
+              </Marker>
+            )}
           </Map>
 
           {/* Map style selector (inside map container) */}
@@ -836,6 +881,16 @@ export default function SupervisorDashboard({
                 </div>
               ))}
             </div>
+            {/* Today's terrain barré mini-map */}
+            <EodMiniMap
+              coveredStreets={submittedEOD.covered_streets as GeoJSON.FeatureCollection | null}
+              locale={locale}
+              height={120}
+              supervisorName={supervisorName}
+              teamName={teamName}
+              date={todayDate}
+            />
+
             {submittedEOD.note && (
               <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">"{submittedEOD.note}"</p>
             )}
@@ -1004,17 +1059,27 @@ export default function SupervisorDashboard({
                           </div>
                         ))}
                       </div>
+                      {/* Terrain barré mini-map */}
+                      <EodMiniMap
+                        coveredStreets={fc}
+                        locale={locale}
+                        height={120}
+                        supervisorName={supervisorName}
+                        teamName={teamName}
+                        date={entry.entry_date ?? undefined}
+                      />
+
+                      {streetCount > 0 && (
+                        <p className="font-body text-xs text-slate-400 dark:text-white/30">
+                          {streetCount} {t('history.streets_drawn')}
+                        </p>
+                      )}
                       {entry.note && (
                         <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">
                           "{entry.note.length > 80 ? entry.note.slice(0, 80) + '…' : entry.note}"
                         </p>
                       )}
                       <RecallsDisplay recalls={entry.recalls} locale={locale} />
-                      {streetCount > 0 && (
-                        <p className="font-body text-xs text-slate-400 dark:text-white/30">
-                          {streetCount} {t('history.streets_drawn')}
-                        </p>
-                      )}
                     </div>
                   )}
                 </div>
@@ -1077,148 +1142,6 @@ export default function SupervisorDashboard({
       )}
 
     </div>
-  )
-}
-
-// ── PPH Leaderboard ────────────────────────────────────────────────────────────
-function PPHLeaderboard({ supervisorId, locale }: { supervisorId: string; locale?: string }) {
-  const [period, setPeriod] = useState<'week' | 'all'>('week')
-  const [rows,   setRows]   = useState<LeaderboardEntry[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    const data = await fetchPPHLeaderboard(period)
-    setRows(data)
-    setLoading(false)
-  }, [period])
-
-  useEffect(() => { load() }, [load])
-
-  // Realtime: refresh on any daily_entries change
-  useEffect(() => {
-    const supabase = createClient()
-    const channel = supabase
-      .channel('leaderboard-entries')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_entries' }, () => { load() })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [load])
-
-  const rankColors = ['text-yellow-500', 'text-slate-400', 'text-amber-600']
-  const rankIcons  = ['#1', '#2', '#3']
-
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="font-display text-lg font-bold text-brand-navy dark:text-white">
-          {locale !== 'en' ? 'Classement PPH' : 'PPH Rankings'}
-        </h2>
-        <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 shrink-0">
-          {(['week', 'all'] as const).map(p => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={cn(
-                'px-3 py-1.5 font-body text-xs font-semibold transition-colors',
-                period === p
-                  ? 'bg-brand-navy text-white'
-                  : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
-              )}
-            >
-              {p === 'week'
-                ? (locale !== 'en' ? '7 jours' : '7 days')
-                : (locale !== 'en' ? 'Tout temps' : 'All time')}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-8">
-          <div className="w-6 h-6 rounded-full border-2 border-brand-teal border-t-transparent animate-spin" />
-        </div>
-      ) : rows.length === 0 ? (
-        <p className="font-body text-sm text-slate-400 dark:text-white/30">
-          {locale !== 'en' ? 'Aucune donnée pour cette période.' : 'No data for this period.'}
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {rows.map((row, i) => {
-            const isMe = row.supervisor_id === supervisorId
-            return (
-              <div
-                key={row.supervisor_id}
-                className={cn(
-                  'flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all duration-150',
-                  isMe
-                    ? 'bg-brand-navy text-white border-brand-navy'
-                    : 'bg-white dark:bg-white/[0.02] border-slate-200/80 dark:border-white/[0.07]',
-                )}
-              >
-                {/* Rank */}
-                <span className={cn(
-                  'font-display text-sm font-bold w-6 text-center shrink-0',
-                  isMe ? 'text-white/80' : (rankColors[i] ?? 'text-slate-400 dark:text-white/30'),
-                )}>
-                  {rankIcons[i] ?? `#${i + 1}`}
-                </span>
-
-                {/* Avatar */}
-                <AvatarDisplay
-                  name={row.supervisor_name}
-                  avatarUrl={row.avatar_url}
-                  size="xs"
-                  bgClass={isMe ? 'bg-white/20' : 'bg-brand-navy/10 dark:bg-white/10'}
-                  className={isMe ? 'text-[9px] font-bold text-white' : 'text-[9px] font-bold text-brand-navy dark:text-white'}
-                />
-
-                {/* Name + team */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className={cn(
-                      'font-body text-sm font-semibold truncate',
-                      isMe ? 'text-white' : 'text-brand-navy dark:text-white',
-                    )}>
-                      {row.supervisor_name}
-                    </p>
-                    {isMe && (
-                      <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full bg-white/20 font-body text-[9px] font-bold text-white uppercase tracking-wide">
-                        {locale !== 'en' ? 'Vous' : 'You'}
-                      </span>
-                    )}
-                  </div>
-                  {row.team_name && (
-                    <p className={cn(
-                      'font-body text-xs truncate',
-                      isMe ? 'text-white/60' : 'text-slate-400 dark:text-white/30',
-                    )}>
-                      {row.team_name}
-                    </p>
-                  )}
-                </div>
-
-                {/* Stats */}
-                <div className="text-right shrink-0">
-                  <p className={cn(
-                    'font-display text-sm font-bold',
-                    isMe ? 'text-white' : 'text-brand-teal',
-                  )}>
-                    {row.avg_pph.toFixed(2)}
-                  </p>
-                  <p className={cn(
-                    'font-body text-[10px]',
-                    isMe ? 'text-white/50' : 'text-slate-400 dark:text-white/30',
-                  )}>
-                    {row.canvas_hours.toFixed(1)}h
-                  </p>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </section>
   )
 }
 

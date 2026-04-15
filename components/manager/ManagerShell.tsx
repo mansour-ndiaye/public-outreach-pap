@@ -48,7 +48,7 @@ export function ManagerShell({ children, user, locale }: ManagerShellProps) {
           className="flex items-center gap-3 hover:opacity-80 transition-opacity"
         >
           <Image src="/assets/logo.jpeg" alt="PO" width={30} height={30} className="rounded-full shrink-0" />
-          <div className="hidden sm:block">
+          <div>
             <p className="font-display text-sm font-bold text-brand-navy dark:text-white leading-tight">
               Public Outreach
             </p>

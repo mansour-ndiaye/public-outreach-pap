@@ -6,11 +6,12 @@ import nextDynamic from 'next/dynamic'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { AvatarDisplay } from '@/components/ui/AvatarButton'
+import { PPHLeaderboard } from '@/components/ui/PPHLeaderboard'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam, TeamZoneStatus } from '@/lib/supabase/zone-actions'
 import type { EODWithTeam } from '@/lib/supabase/eod-actions'
 
-// Lazy-load map (no SSR)
+// Lazy-load map components (no SSR)
 const ManagerMap = nextDynamic(() => import('./ManagerMap'), {
   ssr: false,
   loading: () => (
@@ -22,6 +23,8 @@ const ManagerMap = nextDynamic(() => import('./ManagerMap'), {
     </div>
   ),
 })
+const EodMiniMap    = nextDynamic(() => import('@/components/ui/EodMiniMap'),    { ssr: false })
+const EodHistoryMap = nextDynamic(() => import('@/components/ui/EodHistoryMap'), { ssr: false })
 
 // 8-color team palette
 const TEAM_COLORS = [
@@ -30,7 +33,7 @@ const TEAM_COLORS = [
 ]
 
 type TeamOption = { id: string; name: string }
-type Tab = 'map' | 'teams' | 'performance'
+type Tab = 'map' | 'teams' | 'performance' | 'ranking'
 
 interface ManagerDashboardProps {
   territories:       TerritoryRow[]
@@ -78,6 +81,7 @@ export default function ManagerDashboard({
 
   // Performance tab: supervisor filter
   const [filterSupervisor, setFilterSupervisor] = useState('')
+  const [csvPeriod, setCsvPeriod] = useState<'week' | 'month' | 'all'>('week')
 
   // Supervisor detail slide-over
   const [detailSupervisorId, setDetailSupervisorId] = useState<string | null>(null)
@@ -134,6 +138,53 @@ export default function ManagerDashboard({
     return { totalPac, totalHours, avgPph, activeSupervisorsToday }
   }, [recentEODs, todayDate])
 
+  // CSV export
+  const exportCSV = () => {
+    const now = new Date()
+    let cutoff: string | null = null
+    if (csvPeriod === 'week') {
+      const d = new Date(now); d.setDate(d.getDate() - 7)
+      cutoff = d.toISOString().split('T')[0]
+    } else if (csvPeriod === 'month') {
+      cutoff = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+    }
+    const rows = cutoff ? recentEODs.filter(e => (e.entry_date ?? '') >= cutoff!) : recentEODs
+
+    const escape = (v: string | number | null | undefined) => {
+      if (v == null) return ''
+      const s = String(v)
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? `"${s.replace(/"/g, '""')}"`
+        : s
+    }
+
+    const headers = ['date', 'team', 'supervisor_name', 'pph', 'canvas_hours', 'pac_count', 'pac_total', 'pac_average', 'pfu', 'recalls_count', 'note', 'streets_covered_count']
+    const lines = [
+      headers.join(','),
+      ...rows.map(e => [
+        escape(e.entry_date),
+        escape(e.team_name),
+        escape(e.supervisor_name),
+        escape(e.pph?.toFixed(2)),
+        escape(e.canvas_hours),
+        escape(e.pac_count),
+        escape(e.pac_total_amount),
+        escape(e.pac_average?.toFixed(2)),
+        escape(e.pfu),
+        escape(e.recalls_count),
+        escape(e.note),
+        escape((e.covered_streets as GeoJSON.FeatureCollection | null)?.features?.length ?? 0),
+      ].join(',')),
+    ]
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `performance_${csvPeriod}_${now.toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // Supervisor detail data
   const detailSupervisor = useMemo(() => {
     if (!detailSupervisorId) return null
@@ -161,6 +212,7 @@ export default function ManagerDashboard({
     { key: 'map',         label: t('tabs.map') },
     { key: 'teams',       label: t('tabs.teams') },
     { key: 'performance', label: t('tabs.performance') },
+    { key: 'ranking',     label: t('tabs.ranking') },
   ]
 
   return (
@@ -307,9 +359,44 @@ export default function ManagerDashboard({
         {/* ── PERFORMANCE TAB ── */}
         {tab === 'performance' && (
           <div className="h-full overflow-y-auto p-6 max-w-5xl mx-auto space-y-8">
-            <h2 className="font-display text-xl font-bold text-brand-navy dark:text-white">
-              {t('performance.title')}
-            </h2>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <h2 className="font-display text-xl font-bold text-brand-navy dark:text-white">
+                {t('performance.title')}
+              </h2>
+              {/* CSV Export */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-white/10">
+                  {(['week', 'month', 'all'] as const).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setCsvPeriod(p)}
+                      className={cn(
+                        'px-3 py-1.5 font-body text-xs font-semibold transition-colors',
+                        csvPeriod === p
+                          ? 'bg-brand-navy text-white'
+                          : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
+                      )}
+                    >
+                      {p === 'week'  ? (locale !== 'en' ? '7j' : '7d')
+                      : p === 'month' ? (locale !== 'en' ? 'Mois' : 'Month')
+                      :                 (locale !== 'en' ? 'Tout' : 'All')}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={exportCSV}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-body text-xs font-semibold',
+                    'bg-brand-teal text-white hover:opacity-90 transition-opacity',
+                  )}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 16v-8M9 13l3 3 3-3M5 20h14"/>
+                  </svg>
+                  CSV
+                </button>
+              </div>
+            </div>
 
             {/* Stats cards */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -419,6 +506,13 @@ export default function ManagerDashboard({
           </div>
         )}
 
+        {/* ── RANKING TAB ── */}
+        {tab === 'ranking' && (
+          <div className="h-full overflow-y-auto p-6 max-w-2xl mx-auto">
+            <PPHLeaderboard locale={locale} />
+          </div>
+        )}
+
       </div>
 
       {/* ── SUPERVISOR DETAIL SLIDE-OVER ─────────────────────────────────────── */}
@@ -479,6 +573,14 @@ export default function ManagerDashboard({
               />
             </div>
 
+            {/* ── Full terrain barré history map ── */}
+            <div className="px-5 pt-4 pb-2 shrink-0 border-b border-slate-200/60 dark:border-white/[0.07]">
+              <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide mb-2">
+                {locale !== 'en' ? 'Terrain barré — historique complet' : 'Covered streets — full history'}
+              </p>
+              <EodHistoryMap eods={detailSupervisor.eods} height={200} locale={locale} />
+            </div>
+
             {/* EOD history */}
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
               <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide mb-3">
@@ -527,6 +629,21 @@ export default function ManagerDashboard({
 
                       {isExpanded && (
                         <div className="px-4 pb-4 pt-2 border-t border-slate-100 dark:border-white/[0.04] space-y-3">
+                          {/* Terrain barré mini-map */}
+                          <EodMiniMap
+                            coveredStreets={covered}
+                            locale={locale}
+                            height={120}
+                            supervisorName={eod.supervisor_name ?? undefined}
+                            teamName={eod.team_name ?? undefined}
+                            date={eod.entry_date ?? undefined}
+                          />
+
+                          {streetCount > 0 && (
+                            <p className="font-body text-xs text-slate-400 dark:text-white/30">
+                              {streetCount} {locale !== 'en' ? 'rue(s) couvertes' : 'street(s) covered'}
+                            </p>
+                          )}
                           <div className="grid grid-cols-2 gap-2">
                             {[
                               { label: 'PPH', value: eod.pph?.toFixed(2) ?? '—' },
@@ -542,11 +659,6 @@ export default function ManagerDashboard({
                           </div>
                           {eod.note && (
                             <p className="font-body text-sm text-slate-600 dark:text-white/60 italic leading-relaxed">"{eod.note}"</p>
-                          )}
-                          {streetCount > 0 && (
-                            <p className="font-body text-xs text-slate-400 dark:text-white/30">
-                              {streetCount} {locale !== 'en' ? 'rue(s) couvertes' : 'street(s) covered'}
-                            </p>
                           )}
                         </div>
                       )}

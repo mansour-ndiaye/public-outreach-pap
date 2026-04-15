@@ -16,6 +16,7 @@ import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
+import { BarrePopup } from '@/components/ui/BarrePopup'
 import type { TerritoryRow, TeamRow } from '@/types'
 import { SaveTerritoryModal } from './SaveTerritoryModal'
 import { DeleteTerritoryModal } from './DeleteTerritoryModal'
@@ -165,7 +166,12 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
   const [saveCoords, setSaveCoords] = useState<number[][][] | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<TerritoryRow | null>(null)
   const [tooltipInfo, setTooltipInfo] = useState<{ name: string; lng: number; lat: number } | null>(null)
-  const [barreHover, setBarreHover] = useState<{ supervisor_name: string; date: string; lng: number; lat: number } | null>(null)
+  const [barreHover, setBarreHover] = useState<{
+    supervisor_name: string; team_name: string | null; date: string
+    pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
+    pfu: number; recalls_count: number; note: string | null; streets_count: number
+    lng: number; lat: number
+  } | null>(null)
 
   // ── Refs for freehand (avoid stale closures in raw event handlers) ───────────
   const freehandRef = useRef<{ drawing: boolean; pts: [number, number][] }>({
@@ -371,12 +377,21 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
         // Check for covered streets hover
         const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line'] })
         if (barreFeatures?.length) {
-          const f = barreFeatures[0]
+          const p = barreFeatures[0].properties ?? {}
           setBarreHover({
-            supervisor_name: (f.properties?.supervisor_name as string | null) ?? '—',
-            date:            (f.properties?.date as string | null) ?? '—',
-            lng:             e.lngLat.lng,
-            lat:             e.lngLat.lat,
+            supervisor_name:  (p.supervisor_name as string | null) ?? '—',
+            team_name:        (p.team_name as string | null) ?? null,
+            date:             (p.date as string | null) ?? '—',
+            pph:              Number(p.pph ?? 0),
+            canvas_hours:     p.canvas_hours != null ? Number(p.canvas_hours) : null,
+            pac_count:        Number(p.pac_count ?? 0),
+            pac_total_amount: Number(p.pac_total_amount ?? 0),
+            pfu:              Number(p.pfu ?? 0),
+            recalls_count:    Number(p.recalls_count ?? 0),
+            note:             (p.note as string | null) ?? null,
+            streets_count:    Number(p.streets_count ?? 0),
+            lng:              e.lngLat.lng,
+            lat:              e.lngLat.lat,
           })
         } else {
           setBarreHover(null)
@@ -527,18 +542,15 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             <Layer id="territories-outline" type="line" paint={outlinePaint} />
           </Source>
 
-          {/* Terrain barré — bold black #000000 */}
+          {/* Terrain barré — black #000000 */}
           <Source id="admin-covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
-            <Layer id="admin-covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 4, 'line-opacity': 0.85 }} />
+            <Layer id="admin-covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
           </Source>
 
           {/* Hover tooltip for terrain barré */}
           {barreHover && (
             <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
-              <div className="mb-2 px-3 py-1.5 rounded-xl bg-brand-navy text-white font-body text-xs shadow-lg pointer-events-none whitespace-nowrap">
-                <p className="font-semibold">{barreHover.supervisor_name}</p>
-                <p className="opacity-70">{barreHover.date}</p>
-              </div>
+              <BarrePopup info={barreHover} onClose={() => setBarreHover(null)} />
             </Marker>
           )}
 
