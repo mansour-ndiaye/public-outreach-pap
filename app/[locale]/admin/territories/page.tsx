@@ -20,7 +20,7 @@ const TerritoriesMap = nextDynamic(
   },
 )
 
-export default async function AdminTerritoriesPage() {
+export default async function AdminTerritoriesPage({ params: { locale } }: { params: { locale: string } }) {
   const [territories, teams, allCoveredStreets] = await Promise.all([
     fetchTerritories() as Promise<TerritoryRow[]>,
     fetchTeams()       as Promise<TeamRow[]>,
@@ -29,7 +29,7 @@ export default async function AdminTerritoriesPage() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <TerritoriesMap territories={territories} teams={teams} allCoveredStreets={allCoveredStreets} />
+      <TerritoriesMap territories={territories} teams={teams} allCoveredStreets={allCoveredStreets} locale={locale} />
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneRow, DailyZoneWithTeam } from './zone-actions'
+import { notifyManagersEODSubmitted } from './notification-actions'
 
 export type RecallEntry = {
   street:      string
@@ -181,7 +182,7 @@ export async function fetchTeamPastCoveredStreets(
 
   const { data: entries } = await supabase
     .from('daily_entries')
-    .select('covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
+    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
     .in('supervisor_id', memberIds)
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
@@ -191,6 +192,7 @@ export async function fetchTeamPastCoveredStreets(
 }
 
 type CoveredStreetEntry = {
+  id:              string
   covered_streets: GeoJSON.FeatureCollection | null
   supervisor_id:   string | null
   team_id:         string | null
@@ -234,8 +236,9 @@ async function enrichCoveredStreets(
     if (row.covered_streets?.features) {
       const props = {
         supervisor_name:  row.supervisor_id ? (supNames.get(row.supervisor_id) ?? null) : null,
+        supervisor_id:    row.supervisor_id,
         team_name:        row.team_id ? (teamNames.get(row.team_id) ?? null) : null,
-        date:             row.entry_date,
+        entry_date:       row.entry_date,
         pph:              row.pph,
         canvas_hours:     row.canvas_hours,
         pac_count:        row.pac_count,
@@ -244,9 +247,14 @@ async function enrichCoveredStreets(
         recalls_count:    row.recalls_count,
         note:             row.note,
         streets_count:    row.covered_streets.features.length,
+        entry_id:         row.id,
       }
-      for (const f of row.covered_streets.features) {
-        allFeatures.push({ ...f, properties: { ...f.properties, ...props } })
+      for (let i = 0; i < row.covered_streets.features.length; i++) {
+        const f = row.covered_streets.features[i]
+        allFeatures.push({
+          ...f,
+          properties: { ...f.properties, ...props, feature_index: i },
+        })
       }
     }
   }
@@ -260,7 +268,7 @@ export async function fetchAllCoveredStreets(): Promise<GeoJSON.FeatureCollectio
 
   const { data: entries } = await supabase
     .from('daily_entries')
-    .select('covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
+    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
     .limit(300)
@@ -303,7 +311,7 @@ export async function fetchPastCoveredStreets(supervisorId: string): Promise<Geo
 
   const { data } = await supabase
     .from('daily_entries')
-    .select('covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
+    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
     .eq('supervisor_id', supervisorId)
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
@@ -326,8 +334,24 @@ export async function submitEOD(data: {
   pfu:              number
   note:             string
   covered_streets:  GeoJSON.FeatureCollection
+  // Optional — used for notifications
+  supervisorName?:  string
+  teamName?:        string
 }): Promise<{ id?: string; error?: string }> {
   const supabase = createClient()
+
+  // Stamp each feature with a stable feature_id for individual deletion support
+  const featuresWithIds = data.covered_streets.features.map(f => ({
+    ...f,
+    properties: {
+      ...f.properties,
+      feature_id: crypto.randomUUID(),
+    },
+  }))
+  const coveredStreetsWithIds: GeoJSON.FeatureCollection = {
+    ...data.covered_streets,
+    features: featuresWithIds,
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: entry, error } = await (supabase as any)
@@ -345,7 +369,7 @@ export async function submitEOD(data: {
       recalls:          data.recalls,
       pfu:              data.pfu,
       note:             data.note || null,
-      covered_streets:  data.covered_streets,
+      covered_streets:  coveredStreetsWithIds,
     })
     .select()
     .single() as { data: { id: string } | null; error: { message: string } | null }
@@ -357,7 +381,63 @@ export async function submitEOD(data: {
   revalidatePath('/fr/manager/dashboard')
   revalidatePath('/en/manager/dashboard')
 
+  // Fire-and-forget: notify all admins/managers
+  notifyManagersEODSubmitted({
+    senderId:      data.supervisor_id,
+    teamId:        data.team_id,
+    teamName:      data.teamName ?? '',
+    pph:           data.pph,
+    entryId:       entry.id,
+    entryDate:     data.entry_date,
+    supervisorName: data.supervisorName,
+  }).catch(() => { /* non-critical */ })
+
   return { id: entry.id }
+}
+
+// ── Delete a single terrain barré line from an EOD entry ─────────────────────
+export async function deleteStreetFeature(
+  entryId:      string,
+  featureIndex: number,
+): Promise<{ error?: string }> {
+  const supabase = createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Unauthorized' }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error: fetchErr } = await (supabase as any)
+    .from('daily_entries')
+    .select('covered_streets')
+    .eq('id', entryId)
+    .single() as { data: { covered_streets: GeoJSON.FeatureCollection | null } | null; error: { message: string } | null }
+
+  if (fetchErr || !data) return { error: fetchErr?.message ?? 'Entry not found' }
+
+  const fc = data.covered_streets
+  if (!fc?.features) return { error: 'No features found' }
+
+  const newFeatures = fc.features.filter((_, i) => i !== featureIndex)
+  const newFC: GeoJSON.FeatureCollection = { ...fc, features: newFeatures }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: updateErr } = await (supabase as any)
+    .from('daily_entries')
+    .update({ covered_streets: newFC })
+    .eq('id', entryId)
+
+  if (updateErr) return { error: updateErr.message }
+
+  revalidatePath('/fr/supervisor/dashboard')
+  revalidatePath('/en/supervisor/dashboard')
+  revalidatePath('/fr/manager/dashboard')
+  revalidatePath('/en/manager/dashboard')
+  revalidatePath('/fr/admin/manager')
+  revalidatePath('/en/admin/manager')
+  revalidatePath('/fr/admin/territories')
+  revalidatePath('/en/admin/territories')
+
+  return {}
 }
 
 // ── PPH leaderboard across all supervisors ────────────────────────────────────

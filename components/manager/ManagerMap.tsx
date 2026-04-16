@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import Map, {
   Source, Layer, Marker, NavigationControl, type MapRef, type MapMouseEvent,
 } from 'react-map-gl/mapbox'
@@ -8,6 +9,7 @@ import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { createDailyZone, fetchSupervisorsForTeam } from '@/lib/supabase/zone-actions'
+import { deleteStreetFeature } from '@/lib/supabase/eod-actions'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import { BarrePopup } from '@/components/ui/BarrePopup'
 import type { TerritoryRow } from '@/types'
@@ -127,12 +129,24 @@ export default function ManagerMap({
   const [mapLoaded,    setMapLoaded]    = useState(false)
 
   // UI state
+  const router = useRouter()
   const [panelOpen,   setPanelOpen]   = useState(false)
   const [drawMode,    setDrawMode]    = useState<'idle' | 'drawing'>('idle')
   const [saving,      setSaving]      = useState(false)
   const [saveError,   setSaveError]   = useState('')
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [cursor,      setCursor]      = useState<string>('grab')
+
+  // Edit mode (delete terrain barré)
+  const [editMode,       setEditMode]       = useState(false)
+  const [deleteTarget,   setDeleteTarget]   = useState<{ entryId: string; featureIndex: number; supervisorName: string; date: string } | null>(null)
+  const [deleting,       setDeleting]       = useState(false)
+  const [deleteError,    setDeleteError]    = useState('')
+
+  // Assignment confirmation popup
+  const [assignConfirm, setAssignConfirm] = useState<{
+    supervisorName: string; teamName: string; date: string; streetCount: number
+  } | null>(null)
 
   // Assignment form
   const [formTeamId,       setFormTeamId]       = useState('')
@@ -159,6 +173,7 @@ export default function ManagerMap({
     pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
     pfu: number; recalls_count: number; note: string | null; streets_count: number
     lng: number; lat: number
+    entry_id?: string; feature_index?: number
   } | null>(null)
 
   // Detect touch device + show hint
@@ -220,10 +235,29 @@ export default function ManagerMap({
   )
 
   const handleMapClick = useCallback((e: MapMouseEvent) => {
-    if (drawMode !== 'drawing') return
-    const { lng, lat } = e.lngLat
-    setCurrentLine(prev => [...prev, [lng, lat]])
-  }, [drawMode])
+    if (drawMode === 'drawing') {
+      const { lng, lat } = e.lngLat
+      setCurrentLine(prev => [...prev, [lng, lat]])
+      return
+    }
+    if (editMode && drawMode === 'idle') {
+      const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line'] })
+      if (features?.length) {
+        const p = features[0].properties ?? {}
+        const entryId      = p.entry_id as string | undefined
+        const featureIndex = p.feature_index != null ? Number(p.feature_index) : undefined
+        if (entryId != null && featureIndex != null) {
+          setDeleteTarget({
+            entryId,
+            featureIndex,
+            supervisorName: (p.supervisor_name as string) ?? '',
+            date:           (p.entry_date as string) ?? (p.date as string) ?? '',
+          })
+          setBarreHover(null)
+        }
+      }
+    }
+  }, [drawMode, editMode])
 
   const handleMouseMove = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') { setBarreHover(null); return }
@@ -233,7 +267,7 @@ export default function ManagerMap({
       setBarreHover({
         supervisor_name:  (p.supervisor_name as string | null) ?? '—',
         team_name:        (p.team_name as string | null) ?? null,
-        date:             (p.date as string | null) ?? '—',
+        date:             (p.entry_date as string | null) ?? (p.date as string | null) ?? '—',
         pph:              Number(p.pph ?? 0),
         canvas_hours:     p.canvas_hours != null ? Number(p.canvas_hours) : null,
         pac_count:        Number(p.pac_count ?? 0),
@@ -244,6 +278,8 @@ export default function ManagerMap({
         streets_count:    Number(p.streets_count ?? 0),
         lng:              e.lngLat.lng,
         lat:              e.lngLat.lat,
+        entry_id:         (p.entry_id as string | null) ?? undefined,
+        feature_index:    p.feature_index != null ? Number(p.feature_index) : undefined,
       })
     } else {
       setBarreHover(null)
@@ -280,6 +316,7 @@ export default function ManagerMap({
     setAiInput('')
     setAiPreview(null)
     setAiError('')
+    setAssignConfirm(null)
     recognitionRef.current?.stop()
     setIsRecording(false)
   }
@@ -295,6 +332,7 @@ export default function ManagerMap({
     setAiError('')
     setSaveSuccess(false)
     setSaveError('')
+    setAssignConfirm(null)
     // keep formTeamId, formSupervisorId, formDate, formNote
   }
 
@@ -420,6 +458,28 @@ export default function ManagerMap({
     setIsRecording(true)
   }
 
+  // ── Auto-dismiss assign confirmation after 3s ─────────────────────────────
+  useEffect(() => {
+    if (!assignConfirm) return
+    const timer = setTimeout(() => setAssignConfirm(null), 3000)
+    return () => clearTimeout(timer)
+  }, [assignConfirm])
+
+  // ── Delete confirmation handler ────────────────────────────────────────────
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError('')
+    const result = await deleteStreetFeature(deleteTarget.entryId, deleteTarget.featureIndex)
+    setDeleting(false)
+    if (result.error) {
+      setDeleteError(result.error)
+    } else {
+      setDeleteTarget(null)
+      router.refresh()
+    }
+  }, [deleteTarget, router])
+
   // ── Save zone ─────────────────────────────────────────────────────────────────
   const saveZone = async () => {
     const allStreets = [...drawnStreets]
@@ -444,8 +504,22 @@ export default function ManagerMap({
     })
     setSaving(false)
 
-    if (result.error) setSaveError(result.error)
-    else setSaveSuccess(true)
+    if (result.error) {
+      setSaveError(result.error)
+    } else {
+      setSaveSuccess(true)
+      // Show assignment confirmation popup
+      const supName = supervisors.find(s => s.id === formSupervisorId)?.full_name
+        ?? supervisors.find(s => s.id === formSupervisorId)?.email
+        ?? '—'
+      const tmName = teams.find(tm => tm.id === formTeamId)?.name ?? '—'
+      setAssignConfirm({
+        supervisorName: supName,
+        teamName:       tmName,
+        date:           formDate,
+        streetCount:    allStreets.length,
+      })
+    }
     // Don't auto-close — let Alicia assign another zone or close manually
   }
 
@@ -537,13 +611,161 @@ export default function ManagerMap({
           </Source>
         )}
 
-        {/* Terrain barré popup */}
-        {barreHover && (
+        {/* Terrain barré popup — hide in edit mode */}
+        {barreHover && !editMode && (
           <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
             <BarrePopup info={barreHover} onClose={() => setBarreHover(null)} />
           </Marker>
         )}
       </Map>
+
+      {/* Edit mode toggle button (only when panel is closed + not drawing) */}
+      {!panelOpen && drawMode === 'idle' && (
+        <button
+          onClick={() => { setEditMode(prev => !prev); setDeleteTarget(null); setDeleteError('') }}
+          className={cn(
+            'absolute top-4 left-4 z-20',
+            'flex items-center gap-1.5 px-3 h-9 rounded-xl',
+            'font-body text-xs font-semibold',
+            'border shadow-md backdrop-blur-sm transition-colors',
+            editMode
+              ? 'bg-brand-red/90 text-white border-brand-red/30'
+              : 'bg-white/95 dark:bg-[#12163a]/95 text-slate-700 dark:text-white/80 border-slate-200/80 dark:border-white/[0.12]',
+          )}
+        >
+          {editMode ? (
+            <>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+              {locale !== 'en' ? 'Terminer' : 'Done'}
+            </>
+          ) : (
+            <>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+              </svg>
+              {locale !== 'en' ? 'Éditer' : 'Edit'}
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Edit mode hint */}
+      {editMode && !panelOpen && (
+        <div className={cn(
+          'absolute top-4 left-1/2 -translate-x-1/2 z-20',
+          'flex items-center gap-2 px-4 py-2 rounded-xl',
+          'bg-brand-red/90 backdrop-blur-sm text-white',
+          'font-body text-xs pointer-events-none whitespace-nowrap',
+        )}>
+          <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+          {locale !== 'en' ? 'Cliquez sur une rue pour la supprimer' : 'Click a street to remove it'}
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {deleteTarget && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className={cn(
+            'mx-4 w-full max-w-xs rounded-2xl overflow-hidden shadow-2xl',
+            'bg-white dark:bg-[#12163a]',
+            'border border-slate-200/80 dark:border-white/[0.08]',
+          )}>
+            <div className="h-1 bg-brand-red" />
+            <div className="px-5 py-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-brand-red/10 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-brand-red" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-display font-bold text-brand-navy dark:text-white text-sm">
+                    {locale !== 'en'
+                      ? `Supprimer la rue barrée de ${deleteTarget.supervisorName || '—'}`
+                      : `Remove ${deleteTarget.supervisorName || '—'}'s covered street`}
+                  </p>
+                  {deleteTarget.date && (
+                    <p className="font-body text-xs text-slate-500 dark:text-white/50 mt-0.5">
+                      {deleteTarget.date}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {deleteError && (
+                <p className="font-body text-xs text-brand-red">{deleteError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setDeleteTarget(null); setDeleteError('') }}
+                  className="flex-1 h-10 rounded-xl font-body text-sm font-semibold border border-slate-200 dark:border-white/[0.12] text-slate-600 dark:text-white/70 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-colors"
+                >
+                  {locale !== 'en' ? 'Annuler' : 'Cancel'}
+                </button>
+                <button
+                  onClick={handleDeleteConfirm}
+                  disabled={deleting}
+                  className="flex-1 h-10 rounded-xl font-body text-sm font-semibold bg-brand-red text-white hover:bg-brand-red/90 disabled:opacity-60 transition-colors"
+                >
+                  {deleting ? (
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin mx-auto" />
+                  ) : (
+                    locale !== 'en' ? 'Confirmer' : 'Confirm'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assignment confirmation popup */}
+      {assignConfirm && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none">
+          <div className={cn(
+            'mx-4 w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl pointer-events-auto',
+            'bg-white dark:bg-[#12163a]',
+            'border border-slate-200/80 dark:border-white/[0.08]',
+            'animate-fade-in',
+          )}>
+            <div className="h-1.5 bg-brand-navy" />
+            <div className="px-6 py-5 text-center space-y-3">
+              {/* Green checkmark */}
+              <div className="w-14 h-14 rounded-full bg-[#22c55e]/10 flex items-center justify-center mx-auto">
+                <svg className="w-8 h-8 text-[#22c55e]" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/>
+                </svg>
+              </div>
+              <div>
+                <p className="font-display text-lg font-bold text-brand-navy dark:text-white">
+                  {locale !== 'en' ? 'Terrain assigné!' : 'Turf assigned!'}
+                </p>
+                <p className="font-body text-sm text-slate-600 dark:text-white/70 mt-1">
+                  {assignConfirm.supervisorName}
+                  {assignConfirm.teamName !== '—' && ` · ${assignConfirm.teamName}`}
+                  {assignConfirm.date && ` · ${new Date(assignConfirm.date + 'T00:00:00').toLocaleDateString(locale !== 'en' ? 'fr-CA' : 'en-CA', { day: 'numeric', month: 'long', year: 'numeric' })}`}
+                </p>
+                {assignConfirm.streetCount > 0 && (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 mt-1">
+                    {assignConfirm.streetCount} {locale !== 'en'
+                      ? (assignConfirm.streetCount > 1 ? 'rues assignées' : 'rue assignée')
+                      : (assignConfirm.streetCount > 1 ? 'streets assigned' : 'street assigned')}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setAssignConfirm(null)}
+                className="mt-1 font-body text-xs text-slate-400 dark:text-white/30 hover:text-slate-600 dark:hover:text-white/60 transition-colors"
+              >
+                {locale !== 'en' ? 'Fermer' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Assign Zone button */}
       {!panelOpen && (

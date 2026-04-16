@@ -3,6 +3,7 @@
 import {
   useRef, useState, useCallback, useEffect, useMemo,
 } from 'react'
+import { useRouter } from 'next/navigation'
 import Map, {
   Source,
   Layer,
@@ -17,6 +18,7 @@ import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import { BarrePopup } from '@/components/ui/BarrePopup'
+import { deleteStreetFeature } from '@/lib/supabase/eod-actions'
 import type { TerritoryRow, TeamRow } from '@/types'
 import { SaveTerritoryModal } from './SaveTerritoryModal'
 import { DeleteTerritoryModal } from './DeleteTerritoryModal'
@@ -142,10 +144,12 @@ interface Props {
   territories:       TerritoryRow[]
   teams:             TeamRow[]
   allCoveredStreets?: GeoJSON.FeatureCollection
+  locale?:           string
 }
 
-export function TerritoriesMap({ territories: initialTerritories, teams, allCoveredStreets }: Props) {
+export function TerritoriesMap({ territories: initialTerritories, teams, allCoveredStreets, locale }: Props) {
   const mapRef = useRef<MapRef>(null)
+  const router = useRouter()
   const { resolvedTheme } = useTheme()
   const t = useTranslations('admin.territories')
 
@@ -171,7 +175,14 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
     pfu: number; recalls_count: number; note: string | null; streets_count: number
     lng: number; lat: number
+    entry_id?: string; feature_index?: number
   } | null>(null)
+
+  // Edit mode (delete terrain barré)
+  const [editMode,           setEditMode]           = useState(false)
+  const [streetDeleteTarget, setStreetDeleteTarget] = useState<{ entryId: string; featureIndex: number; supervisorName: string; date: string } | null>(null)
+  const [streetDeleting,     setStreetDeleting]     = useState(false)
+  const [streetDeleteError,  setStreetDeleteError]  = useState('')
 
   // ── Refs for freehand (avoid stale closures in raw event handlers) ───────────
   const freehandRef = useRef<{ drawing: boolean; pts: [number, number][] }>({
@@ -348,10 +359,29 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     }
 
     if (drawMode === 'idle') {
+      if (editMode) {
+        // In edit mode: click on terrain barré to delete
+        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line'] })
+        if (barreFeatures?.length) {
+          const p = barreFeatures[0].properties ?? {}
+          const entryId      = p.entry_id as string | undefined
+          const featureIndex = p.feature_index != null ? Number(p.feature_index) : undefined
+          if (entryId != null && featureIndex != null) {
+            setStreetDeleteTarget({
+              entryId,
+              featureIndex,
+              supervisorName: (p.supervisor_name as string) ?? '',
+              date:           (p.entry_date as string) ?? (p.date as string) ?? '',
+            })
+            setBarreHover(null)
+          }
+        }
+        return
+      }
       const feat = e.features?.[0]
       setSelectedId(feat?.properties?.id ?? null)
     }
-  }, [drawMode])
+  }, [drawMode, editMode])
 
   const onMapDblClick = useCallback(() => {
     if (drawMode !== 'click') return
@@ -381,7 +411,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
           setBarreHover({
             supervisor_name:  (p.supervisor_name as string | null) ?? '—',
             team_name:        (p.team_name as string | null) ?? null,
-            date:             (p.date as string | null) ?? '—',
+            date:             (p.entry_date as string | null) ?? (p.date as string | null) ?? '—',
             pph:              Number(p.pph ?? 0),
             canvas_hours:     p.canvas_hours != null ? Number(p.canvas_hours) : null,
             pac_count:        Number(p.pac_count ?? 0),
@@ -392,6 +422,8 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             streets_count:    Number(p.streets_count ?? 0),
             lng:              e.lngLat.lng,
             lat:              e.lngLat.lat,
+            entry_id:         (p.entry_id as string | null) ?? undefined,
+            feature_index:    p.feature_index != null ? Number(p.feature_index) : undefined,
           })
         } else {
           setBarreHover(null)
@@ -399,6 +431,21 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
       }
     }
   }, [drawMode, isTouch, draftPoints.length])
+
+  // ── Delete terrain barré ─────────────────────────────────────────────────────
+  const handleDeleteStreetConfirm = useCallback(async () => {
+    if (!streetDeleteTarget) return
+    setStreetDeleting(true)
+    setStreetDeleteError('')
+    const result = await deleteStreetFeature(streetDeleteTarget.entryId, streetDeleteTarget.featureIndex)
+    setStreetDeleting(false)
+    if (result.error) {
+      setStreetDeleteError(result.error)
+    } else {
+      setStreetDeleteTarget(null)
+      router.refresh()
+    }
+  }, [streetDeleteTarget, router])
 
   // ── Save / delete callbacks ───────────────────────────────────────────────────
   const handleSave = useCallback((territory: TerritoryRow) => {
@@ -547,8 +594,8 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             <Layer id="admin-covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
           </Source>
 
-          {/* Hover tooltip for terrain barré */}
-          {barreHover && (
+          {/* Hover tooltip for terrain barré — hidden in edit mode */}
+          {barreHover && !editMode && (
             <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
               <BarrePopup info={barreHover} onClose={() => setBarreHover(null)} />
             </Marker>
@@ -619,6 +666,109 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             </Marker>
           ))}
         </Map>
+
+        {/* Edit mode toggle button — visible when not drawing */}
+        {!isDrawing && !saveCoords && (
+          <button
+            onClick={() => { setEditMode(prev => !prev); setStreetDeleteTarget(null); setStreetDeleteError('') }}
+            className={cn(
+              'absolute bottom-16 right-4 z-10',
+              'flex items-center gap-1.5 px-3 h-9 rounded-xl',
+              'font-body text-xs font-semibold',
+              'border shadow-md backdrop-blur-sm transition-colors',
+              editMode
+                ? 'bg-brand-red/90 text-white border-brand-red/30'
+                : 'bg-white/95 dark:bg-[#12163a]/95 text-slate-700 dark:text-white/80 border-slate-200/80 dark:border-white/[0.12]',
+            )}
+          >
+            {editMode ? (
+              <>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+                {locale !== 'en' ? 'Terminer' : 'Done'}
+              </>
+            ) : (
+              <>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+                {locale !== 'en' ? 'Éditer rues' : 'Edit streets'}
+              </>
+            )}
+          </button>
+        )}
+
+        {/* Edit mode hint */}
+        {editMode && !isDrawing && (
+          <div className={cn(
+            'absolute top-4 left-1/2 -translate-x-1/2 z-10',
+            'flex items-center gap-2 px-4 py-2 rounded-xl',
+            'bg-brand-red/90 backdrop-blur-sm text-white',
+            'font-body text-xs pointer-events-none whitespace-nowrap',
+          )}>
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+            </svg>
+            {locale !== 'en' ? 'Cliquez sur une rue pour la supprimer' : 'Click a street to remove it'}
+          </div>
+        )}
+
+        {/* Delete terrain barré confirmation dialog */}
+        {streetDeleteTarget && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className={cn(
+              'mx-4 w-full max-w-xs rounded-2xl overflow-hidden shadow-2xl',
+              'bg-white dark:bg-[#12163a]',
+              'border border-slate-200/80 dark:border-white/[0.08]',
+            )}>
+              <div className="h-1 bg-brand-red" />
+              <div className="px-5 py-5 space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-brand-red/10 flex items-center justify-center shrink-0">
+                    <svg className="w-5 h-5 text-brand-red" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="font-display font-bold text-brand-navy dark:text-white text-sm">
+                      {locale !== 'en'
+                        ? `Supprimer la rue barrée de ${streetDeleteTarget.supervisorName || '—'}`
+                        : `Remove ${streetDeleteTarget.supervisorName || '—'}'s covered street`}
+                    </p>
+                    {streetDeleteTarget.date && (
+                      <p className="font-body text-xs text-slate-500 dark:text-white/50 mt-0.5">
+                        {streetDeleteTarget.date}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {streetDeleteError && (
+                  <p className="font-body text-xs text-brand-red">{streetDeleteError}</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setStreetDeleteTarget(null); setStreetDeleteError('') }}
+                    className="flex-1 h-10 rounded-xl font-body text-sm font-semibold border border-slate-200 dark:border-white/[0.12] text-slate-600 dark:text-white/70 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-colors"
+                  >
+                    {locale !== 'en' ? 'Annuler' : 'Cancel'}
+                  </button>
+                  <button
+                    onClick={handleDeleteStreetConfirm}
+                    disabled={streetDeleting}
+                    className="flex-1 h-10 rounded-xl font-body text-sm font-semibold bg-brand-red text-white hover:bg-brand-red/90 disabled:opacity-60 transition-colors"
+                  >
+                    {streetDeleting ? (
+                      <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin mx-auto" />
+                    ) : (
+                      locale !== 'en' ? 'Confirmer' : 'Confirm'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Drawing toolbar ─────────────────────────────────────────────────
              Desktop: top-left, both modes

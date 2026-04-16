@@ -231,6 +231,38 @@ export type Database = {
         }
         Relationships: []
       }
+
+      notifications: {
+        Row: {
+          id:           string
+          recipient_id: string
+          sender_id:    string | null
+          type:         string
+          title:        string
+          message:      string
+          metadata:     Record<string, unknown>
+          read:         boolean
+          created_at:   string
+        }
+        Insert: {
+          id?:           string
+          recipient_id:  string
+          sender_id?:    string | null
+          type?:         string
+          title:         string
+          message:       string
+          metadata?:     Record<string, unknown>
+          read?:         boolean
+          created_at?:   string
+        }
+        Update: {
+          read?:     boolean
+          title?:    string
+          message?:  string
+          metadata?: Record<string, unknown>
+        }
+        Relationships: []
+      }
     }
 
     Views: Record<string, never>

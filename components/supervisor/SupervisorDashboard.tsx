@@ -3,6 +3,7 @@
 import {
   useRef, useState, useCallback, useEffect, useMemo, useTransition,
 } from 'react'
+import { useRouter } from 'next/navigation'
 import Map, {
   Source, Layer, Marker, NavigationControl, type MapRef, type MapMouseEvent,
 } from 'react-map-gl/mapbox'
@@ -16,7 +17,7 @@ import type { BarrePopupInfo } from '@/components/ui/BarrePopup'
 import { PPHLeaderboard } from '@/components/ui/PPHLeaderboard'
 
 const EodMiniMap = nextDynamic(() => import('@/components/ui/EodMiniMap'), { ssr: false })
-import { submitEOD } from '@/lib/supabase/eod-actions'
+import { submitEOD, deleteStreetFeature } from '@/lib/supabase/eod-actions'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam } from '@/lib/supabase/zone-actions'
 import type { EODEntry, RecallEntry } from '@/lib/supabase/eod-actions'
@@ -142,7 +143,14 @@ export default function SupervisorDashboard({
   // ── Team toggle panel ──────────────────────────────────────────────────────
   const [showTeamPanel,    setShowTeamPanel]    = useState(false)
   const [hiddenSupervisors, setHiddenSupervisors] = useState<Set<string>>(new Set())
-  const [barreHover, setBarreHover] = useState<(BarrePopupInfo & { lng: number; lat: number }) | null>(null)
+  const [barreHover, setBarreHover] = useState<(BarrePopupInfo & { lng: number; lat: number; entry_id?: string; feature_index?: number }) | null>(null)
+
+  // ── Edit mode (delete terrain barré) ──────────────────────────────────────
+  const router = useRouter()
+  const [editMode,     setEditMode]     = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<{ entryId: string; featureIndex: number; supervisorName: string; date: string } | null>(null)
+  const [deleting,     setDeleting]     = useState(false)
+  const [deleteError,  setDeleteError]  = useState('')
 
   // ── Tab navigation ─────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'dashboard' | 'ranking'>('dashboard')
@@ -294,12 +302,50 @@ export default function SupervisorDashboard({
     return ''
   }, [pacAmount, pacCount])
 
+  // ── Delete confirmation handler ────────────────────────────────────────────
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError('')
+    const result = await deleteStreetFeature(deleteTarget.entryId, deleteTarget.featureIndex)
+    setDeleting(false)
+    if (result.error) {
+      setDeleteError(result.error)
+    } else {
+      setDeleteTarget(null)
+      router.refresh()
+    }
+  }, [deleteTarget, router])
+
   // ── Map handlers ───────────────────────────────────────────────────────────
   const handleMapClick = useCallback((e: MapMouseEvent) => {
-    if (drawMode !== 'drawing') return
-    const { lng, lat } = e.lngLat
-    setCurrentLine(prev => [...prev, [lng, lat]])
-  }, [drawMode])
+    if (drawMode === 'drawing') {
+      const { lng, lat } = e.lngLat
+      setCurrentLine(prev => [...prev, [lng, lat]])
+      return
+    }
+    if (editMode && drawMode === 'idle') {
+      const map = mapRef.current?.getMap()
+      if (!map) return
+      const features = map.queryRenderedFeatures(e.point, {
+        layers: ['past-streets-line', 'team-past-streets-line'],
+      })
+      if (features.length > 0) {
+        const p = features[0].properties ?? {}
+        const entryId = p.entry_id as string | undefined
+        const featureIndex = p.feature_index != null ? Number(p.feature_index) : undefined
+        if (entryId != null && featureIndex != null) {
+          setDeleteTarget({
+            entryId,
+            featureIndex,
+            supervisorName: p.supervisor_name ?? '',
+            date:           p.entry_date ?? '',
+          })
+          setBarreHover(null)
+        }
+      }
+    }
+  }, [drawMode, editMode])
 
   const handleBarreMouseMove = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') return
@@ -322,15 +368,17 @@ export default function SupervisorDashboard({
         recalls_count:    Number(p.recalls_count)    || 0,
         note:             p.note ?? null,
         streets_count:    Number(p.streets_count)    || 0,
-        lng: e.lngLat.lng,
-        lat: e.lngLat.lat,
+        lng:              e.lngLat.lng,
+        lat:              e.lngLat.lat,
+        entry_id:         p.entry_id  ?? undefined,
+        feature_index:    p.feature_index != null ? Number(p.feature_index) : undefined,
       })
-      setCursor('pointer')
+      setCursor(editMode ? 'pointer' : 'pointer')
     } else {
       setBarreHover(null)
       setCursor('grab')
     }
-  }, [drawMode])
+  }, [drawMode, editMode])
 
   useEffect(() => {
     setCursor(drawMode === 'drawing' ? 'crosshair' : 'grab')
@@ -484,6 +532,8 @@ export default function SupervisorDashboard({
         pfu:              parseInt(pfu) || 0,
         note:             fieldNote,
         covered_streets:  fc,
+        supervisorName:   supervisorName,
+        teamName:         teamName,
       })
 
       if (result.error) {
@@ -593,7 +643,7 @@ export default function SupervisorDashboard({
             initialViewState={{ longitude: mapCenter[0], latitude: mapCenter[1], zoom: 13 }}
             style={{ width: '100%', height: '100%' }}
             mapStyle={mapStyleUrl}
-            cursor={cursor}
+            cursor={editMode ? (barreHover ? 'pointer' : 'default') : cursor}
             onClick={handleMapClick}
             onMouseMove={handleBarreMouseMove}
             onMouseLeave={() => { setBarreHover(null); setCursor(drawMode === 'drawing' ? 'crosshair' : 'grab' as string) }}
@@ -655,19 +705,121 @@ export default function SupervisorDashboard({
               </Marker>
             ))}
 
-            {/* Terrain barré hover popup */}
-            {barreHover && (
+            {/* Terrain barré hover popup — hide in edit mode (click to delete instead) */}
+            {barreHover && !editMode && (
               <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
                 <BarrePopup info={barreHover} onClose={() => setBarreHover(null)} />
               </Marker>
             )}
           </Map>
 
+          {/* Edit mode toggle button */}
+          {drawMode === 'idle' && (
+            <button
+              onClick={() => { setEditMode(prev => !prev); setDeleteTarget(null); setDeleteError('') }}
+              className={cn(
+                'absolute top-4 left-4 z-20',
+                'flex items-center gap-1.5 px-3 h-9 rounded-xl',
+                'font-body text-xs font-semibold',
+                'border shadow-md backdrop-blur-sm transition-colors',
+                editMode
+                  ? 'bg-brand-red/90 text-white border-brand-red/30'
+                  : 'bg-white/95 dark:bg-[#12163a]/95 text-slate-700 dark:text-white/80 border-slate-200/80 dark:border-white/[0.12]',
+              )}
+            >
+              {editMode ? (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                  </svg>
+                  {locale !== 'en' ? 'Terminer' : 'Done'}
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                  </svg>
+                  {locale !== 'en' ? 'Éditer' : 'Edit'}
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Edit mode hint banner */}
+          {editMode && (
+            <div className={cn(
+              'absolute top-4 left-1/2 -translate-x-1/2 z-20',
+              'flex items-center gap-2 px-4 py-2 rounded-xl',
+              'bg-brand-red/90 backdrop-blur-sm text-white',
+              'font-body text-xs pointer-events-none whitespace-nowrap',
+            )}>
+              <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+              {locale !== 'en' ? 'Touchez une rue pour la supprimer' : 'Tap a street to remove it'}
+            </div>
+          )}
+
           {/* Map style selector (inside map container) */}
           <MapStyleSelector
             activeUrl={mapStyleUrl}
             onSelect={setMapStyle}
           />
+
+          {/* Delete confirmation dialog */}
+          {deleteTarget && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+              <div className={cn(
+                'mx-4 w-full max-w-xs rounded-2xl overflow-hidden shadow-2xl',
+                'bg-white dark:bg-[#12163a]',
+                'border border-slate-200/80 dark:border-white/[0.08]',
+              )}>
+                <div className="h-1 bg-brand-red" />
+                <div className="px-5 py-5 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-full bg-brand-red/10 flex items-center justify-center shrink-0">
+                      <svg className="w-5 h-5 text-brand-red" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="font-display font-bold text-brand-navy dark:text-white text-sm">
+                        {locale !== 'en' ? 'Supprimer cette rue barrée?' : 'Remove this covered street?'}
+                      </p>
+                      {deleteTarget.supervisorName && (
+                        <p className="font-body text-xs text-slate-500 dark:text-white/50 mt-0.5">
+                          {deleteTarget.supervisorName}
+                          {deleteTarget.date ? ` — ${deleteTarget.date}` : ''}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {deleteError && (
+                    <p className="font-body text-xs text-brand-red">{deleteError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setDeleteTarget(null); setDeleteError('') }}
+                      className="flex-1 h-10 rounded-xl font-body text-sm font-semibold border border-slate-200 dark:border-white/[0.12] text-slate-600 dark:text-white/70 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-colors"
+                    >
+                      {locale !== 'en' ? 'Annuler' : 'Cancel'}
+                    </button>
+                    <button
+                      onClick={handleDeleteConfirm}
+                      disabled={deleting}
+                      className="flex-1 h-10 rounded-xl font-body text-sm font-semibold bg-brand-red text-white hover:bg-brand-red/90 disabled:opacity-60 transition-colors"
+                    >
+                      {deleting ? (
+                        <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin mx-auto" />
+                      ) : (
+                        locale !== 'en' ? 'Confirmer' : 'Confirm'
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Legend + Team Toggle */}

@@ -8,6 +8,7 @@ import { useTranslations } from 'next-intl'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { LocaleToggle } from '@/components/ui/LocaleToggle'
 import { AvatarButton } from '@/components/ui/AvatarButton'
+import { NotificationBell } from '@/components/ui/NotificationBell'
 import { signOut } from '@/lib/supabase/actions'
 import { cn } from '@/lib/utils'
 import type { UserRow } from '@/types'
@@ -234,6 +235,7 @@ export function AdminShell({ children, user, locale }: AdminShellProps) {
 
           {/* Right controls */}
           <div className="flex items-center gap-2">
+            <NotificationBell userId={user.id} locale={locale} />
             <LocaleToggle />
             <ThemeToggle />
           </div>
