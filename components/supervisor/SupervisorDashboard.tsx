@@ -577,7 +577,7 @@ export default function SupervisorDashboard({
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={cn(
-              'px-4 py-2 font-body text-sm font-semibold transition-colors',
+              'px-4 min-h-[44px] font-body text-sm font-semibold transition-colors',
               activeTab === tab.key
                 ? 'bg-brand-navy text-white'
                 : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
@@ -636,7 +636,7 @@ export default function SupervisorDashboard({
         ))}
 
         {/* Map container */}
-        <div className="relative rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/[0.07] shadow-card" style={{ height: 380 }}>
+        <div className="relative rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/[0.07] shadow-card h-[260px] sm:h-[380px]">
           <Map
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}
@@ -844,7 +844,7 @@ export default function SupervisorDashboard({
               <button
                 onClick={() => setShowTeamPanel(v => !v)}
                 className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-body text-xs font-semibold shrink-0',
+                  'flex items-center gap-1.5 px-3 min-h-[44px] rounded-xl font-body text-xs font-semibold shrink-0',
                   'border transition-colors duration-150',
                   showTeamPanel
                     ? 'bg-brand-navy text-white border-brand-navy'
@@ -955,7 +955,7 @@ export default function SupervisorDashboard({
                   onClick={toggleVoice}
                   aria-label={t('map.mic_label')}
                   className={cn(
-                    'w-10 h-10 rounded-xl flex items-center justify-center shrink-0',
+                    'w-11 h-11 rounded-xl flex items-center justify-center shrink-0',
                     isRecording
                       ? 'bg-brand-red text-white animate-pulse'
                       : 'bg-slate-200 text-slate-600 dark:bg-white/10 dark:text-white/60',

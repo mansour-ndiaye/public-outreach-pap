@@ -52,7 +52,7 @@ export function PPHLeaderboard({ supervisorId, locale }: PPHLeaderboardProps) {
               key={p}
               onClick={() => setPeriod(p)}
               className={cn(
-                'px-3 py-1.5 font-body text-xs font-semibold transition-colors',
+                'px-3 min-h-[44px] font-body text-xs font-semibold transition-colors',
                 period === p
                   ? 'bg-brand-navy text-white'
                   : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',

@@ -126,7 +126,7 @@ export function NotificationBell({ userId, locale }: NotificationBellProps) {
       <button
         onClick={() => setPanelOpen(prev => !prev)}
         className={cn(
-          'relative flex items-center justify-center w-9 h-9 rounded-full',
+          'relative flex items-center justify-center w-11 h-11 rounded-full',
           'text-slate-600 dark:text-white/70',
           'hover:bg-slate-100 dark:hover:bg-white/[0.08]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal',
@@ -156,7 +156,8 @@ export function NotificationBell({ userId, locale }: NotificationBellProps) {
       {panelOpen && (
         <div className={cn(
           'absolute right-0 top-full mt-2 z-50',
-          'w-[340px] sm:w-[380px] max-h-[80vh]',
+          'w-[calc(100vw-16px)] sm:w-[380px] max-h-[80vh]',
+          'right-0 sm:right-0',
           'flex flex-col rounded-2xl overflow-hidden',
           'bg-white dark:bg-[#12163a]',
           'border border-slate-200/80 dark:border-white/[0.08]',

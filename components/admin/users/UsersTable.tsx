@@ -240,9 +240,88 @@ export function UsersTable({ users }: UsersTableProps) {
         </button>
       </div>
 
-      {/* ── Table ── */}
+      {/* ── Mobile card list (< sm) ── */}
+      <div className="sm:hidden space-y-3">
+        {filtered.length === 0 ? (
+          <p className="text-center font-body text-sm text-slate-400 dark:text-white/30 py-10">{t('empty')}</p>
+        ) : (
+          filtered.map((user) => (
+            <div
+              key={user.id}
+              className={cn(
+                'rounded-2xl border border-slate-200/80 dark:border-white/[0.07] px-4 py-3.5',
+                'bg-white dark:bg-white/[0.02]',
+                'shadow-[0_1px_4px_rgba(0,0,0,0.04)]',
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <AvatarDisplay
+                  name={user.full_name || user.email}
+                  avatarUrl={user.avatar_url}
+                  size="sm"
+                  bgClass="bg-brand-navy"
+                  className="text-white"
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="font-body text-sm font-semibold text-slate-900 dark:text-white truncate">
+                    {user.full_name || '—'}
+                  </p>
+                  <p className="font-body text-xs text-slate-500 dark:text-white/40 truncate">
+                    {user.email}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => openEdit(user)}
+                    title="Edit role"
+                    className={cn(
+                      'flex items-center justify-center w-11 h-11 rounded-lg',
+                      'text-slate-400 dark:text-white/30',
+                      'hover:bg-brand-navy/8 hover:text-brand-navy dark:hover:bg-white/10 dark:hover:text-white',
+                      'active:scale-90 transition-[background-color,color,transform] duration-150',
+                    )}
+                  >
+                    <svg className="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => openDelete(user)}
+                    title="Delete user"
+                    className={cn(
+                      'flex items-center justify-center w-11 h-11 rounded-lg',
+                      'text-slate-400 dark:text-white/30',
+                      'hover:bg-brand-red/8 hover:text-brand-red',
+                      'active:scale-90 transition-[background-color,color,transform] duration-150',
+                    )}
+                  >
+                    <svg className="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-2.5 pl-1">
+                <span className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full',
+                  'font-body text-xs font-semibold border',
+                  ROLE_BADGE[user.role as UserRole] ?? ROLE_BADGE.field_team,
+                )}>
+                  {tRoles(user.role as UserRole)}
+                </span>
+                <span className="font-body text-xs text-slate-400 dark:text-white/30">
+                  {new Date(user.created_at).toLocaleDateString('fr-CA', { year: 'numeric', month: 'short', day: 'numeric' })}
+                </span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* ── Desktop table (≥ sm) ── */}
       <div className={cn(
-        'rounded-2xl overflow-hidden',
+        'hidden sm:block rounded-2xl overflow-hidden',
         'border border-slate-200/80 dark:border-white/[0.07]',
         'shadow-[0_1px_4px_rgba(0,0,0,0.04),0_4px_16px_rgba(0,0,0,0.04)]',
         'dark:shadow-[0_1px_4px_rgba(0,0,0,0.2)]',
@@ -321,7 +400,7 @@ export function UsersTable({ users }: UsersTableProps) {
                           onClick={() => openEdit(user)}
                           title="Edit role"
                           className={cn(
-                            'flex items-center justify-center w-8 h-8 rounded-lg',
+                            'flex items-center justify-center w-11 h-11 rounded-lg',
                             'text-slate-400 dark:text-white/30',
                             'hover:bg-brand-navy/8 hover:text-brand-navy dark:hover:bg-white/10 dark:hover:text-white',
                             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-teal',
@@ -339,7 +418,7 @@ export function UsersTable({ users }: UsersTableProps) {
                           onClick={() => openDelete(user)}
                           title="Delete user"
                           className={cn(
-                            'flex items-center justify-center w-8 h-8 rounded-lg',
+                            'flex items-center justify-center w-11 h-11 rounded-lg',
                             'text-slate-400 dark:text-white/30',
                             'hover:bg-brand-red/8 hover:text-brand-red',
                             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-red/40',

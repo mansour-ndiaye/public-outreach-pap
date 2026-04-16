@@ -244,7 +244,7 @@ export default function ManagerDashboard({
             key={key}
             onClick={() => setTab(key)}
             className={cn(
-              'px-4 py-2 rounded-lg font-body text-sm font-semibold transition-all duration-150',
+              'px-3 sm:px-4 min-h-[44px] rounded-lg font-body text-sm font-semibold transition-all duration-150',
               tab === key
                 ? 'bg-brand-navy text-white shadow-navy-sm'
                 : 'text-slate-500 dark:text-white/50 hover:text-slate-700 dark:hover:text-white/80 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
@@ -371,7 +371,7 @@ export default function ManagerDashboard({
                       key={p}
                       onClick={() => setCsvPeriod(p)}
                       className={cn(
-                        'px-3 py-1.5 font-body text-xs font-semibold transition-colors',
+                        'px-3 min-h-[44px] font-body text-xs font-semibold transition-colors',
                         csvPeriod === p
                           ? 'bg-brand-navy text-white'
                           : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
@@ -386,7 +386,7 @@ export default function ManagerDashboard({
                 <button
                   onClick={exportCSV}
                   className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-body text-xs font-semibold',
+                    'flex items-center gap-1.5 px-3 min-h-[44px] rounded-xl font-body text-xs font-semibold',
                     'bg-brand-teal text-white hover:opacity-90 transition-opacity',
                   )}
                 >
@@ -438,69 +438,125 @@ export default function ManagerDashboard({
               {filteredEODs.length === 0 ? (
                 <p className="font-body text-sm text-slate-500 dark:text-white/40">{t('performance.empty')}</p>
               ) : (
-                <div className="overflow-hidden rounded-2xl border border-slate-200/80 dark:border-white/[0.07]">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm font-body">
-                      <thead>
-                        <tr className="bg-slate-50 dark:bg-white/[0.03]">
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_date')}</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_team')}</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{locale !== 'en' ? 'Superviseur' : 'Supervisor'}</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_pph')}</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_hours')}</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_pac')}</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_note')}</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
-                        {filteredEODs.map(eod => (
-                          <tr key={eod.id} className="bg-white dark:bg-transparent hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors">
-                            <td className="px-4 py-3 text-slate-600 dark:text-white/60 text-xs whitespace-nowrap">
-                              {eod.entry_date ? formatDate(eod.entry_date) : '—'}
-                            </td>
-                            <td className="px-4 py-3">
-                              {eod.team_name ? (
-                                <div className="flex items-center gap-2">
-                                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: teamColorMap[eod.team_id ?? ''] ?? '#94a3b8' }} />
-                                  <span className="font-semibold text-brand-navy dark:text-white">{eod.team_name}</span>
-                                </div>
-                              ) : '—'}
-                            </td>
-                            <td className="px-4 py-3">
-                              {eod.supervisor_name ? (
-                                <button
-                                  onClick={() => { setDetailSupervisorId(eod.supervisor_id ?? null); setExpandedEOD(null) }}
-                                  className="flex items-center gap-2 group"
-                                >
-                                  <AvatarDisplay
-                                    name={eod.supervisor_name}
-                                    avatarUrl={eod.supervisor_avatar_url}
-                                    size="xs"
-                                    bgClass="bg-brand-navy/10 dark:bg-white/10 group-hover:bg-brand-teal/20"
-                                    className="transition-colors text-[9px] font-bold text-brand-navy dark:text-white"
-                                  />
-                                  <span className="text-slate-700 dark:text-white/70 text-xs group-hover:text-brand-teal transition-colors">{eod.supervisor_name}</span>
-                                </button>
-                              ) : <span className="text-slate-400 dark:text-white/30">—</span>}
-                            </td>
-                            <td className="px-4 py-3 font-semibold text-brand-navy dark:text-brand-teal">
-                              {eod.pph?.toFixed(2) ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600 dark:text-white/60">
-                              {eod.canvas_hours != null ? `${eod.canvas_hours}h` : '—'}
-                            </td>
-                            <td className="px-4 py-3 text-slate-600 dark:text-white/60">
-                              {eod.pac_total_amount ? formatCurrency(eod.pac_total_amount) : '—'}
-                            </td>
-                            <td className="px-4 py-3 text-slate-500 dark:text-white/40 max-w-[220px]">
-                              <TruncatedNote note={eod.note} />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <>
+                  {/* Mobile cards (< sm) */}
+                  <div className="sm:hidden space-y-3">
+                    {filteredEODs.map(eod => (
+                      <div key={eod.id} className="rounded-2xl border border-slate-200/80 dark:border-white/[0.07] bg-white dark:bg-white/[0.02] px-4 py-3.5 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            {eod.team_name && (
+                              <>
+                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: teamColorMap[eod.team_id ?? ''] ?? '#94a3b8' }} />
+                                <span className="font-body text-xs font-semibold text-brand-navy dark:text-white">{eod.team_name}</span>
+                              </>
+                            )}
+                          </div>
+                          <span className="font-body text-xs text-slate-400 dark:text-white/30 whitespace-nowrap">
+                            {eod.entry_date ? formatDate(eod.entry_date) : '—'}
+                          </span>
+                        </div>
+                        {eod.supervisor_name && (
+                          <button
+                            onClick={() => { setDetailSupervisorId(eod.supervisor_id ?? null); setExpandedEOD(null) }}
+                            className="flex items-center gap-2 group"
+                          >
+                            <AvatarDisplay
+                              name={eod.supervisor_name}
+                              avatarUrl={eod.supervisor_avatar_url}
+                              size="xs"
+                              bgClass="bg-brand-navy/10 dark:bg-white/10 group-hover:bg-brand-teal/20"
+                              className="transition-colors text-[9px] font-bold text-brand-navy dark:text-white"
+                            />
+                            <span className="font-body text-sm text-slate-700 dark:text-white/70 group-hover:text-brand-teal transition-colors">{eod.supervisor_name}</span>
+                          </button>
+                        )}
+                        <div className="flex items-center gap-4 pt-0.5">
+                          <div>
+                            <p className="font-body text-[10px] text-slate-400 dark:text-white/30 uppercase tracking-wide">PPH</p>
+                            <p className="font-body text-sm font-semibold text-brand-navy dark:text-brand-teal">{eod.pph?.toFixed(2) ?? '—'}</p>
+                          </div>
+                          <div>
+                            <p className="font-body text-[10px] text-slate-400 dark:text-white/30 uppercase tracking-wide">{t('performance.col_hours')}</p>
+                            <p className="font-body text-sm text-slate-600 dark:text-white/60">{eod.canvas_hours != null ? `${eod.canvas_hours}h` : '—'}</p>
+                          </div>
+                          <div>
+                            <p className="font-body text-[10px] text-slate-400 dark:text-white/30 uppercase tracking-wide">PAC</p>
+                            <p className="font-body text-sm text-slate-600 dark:text-white/60">{eod.pac_total_amount ? formatCurrency(eod.pac_total_amount) : '—'}</p>
+                          </div>
+                        </div>
+                        {eod.note && (
+                          <p className="font-body text-xs text-slate-500 dark:text-white/40 italic line-clamp-2">{eod.note}</p>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </div>
+
+                  {/* Desktop table (≥ sm) */}
+                  <div className="hidden sm:block overflow-hidden rounded-2xl border border-slate-200/80 dark:border-white/[0.07]">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm font-body">
+                        <thead>
+                          <tr className="bg-slate-50 dark:bg-white/[0.03]">
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_date')}</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_team')}</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{locale !== 'en' ? 'Superviseur' : 'Supervisor'}</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_pph')}</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_hours')}</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_pac')}</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('performance.col_note')}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+                          {filteredEODs.map(eod => (
+                            <tr key={eod.id} className="bg-white dark:bg-transparent hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors">
+                              <td className="px-4 py-3 text-slate-600 dark:text-white/60 text-xs whitespace-nowrap">
+                                {eod.entry_date ? formatDate(eod.entry_date) : '—'}
+                              </td>
+                              <td className="px-4 py-3">
+                                {eod.team_name ? (
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: teamColorMap[eod.team_id ?? ''] ?? '#94a3b8' }} />
+                                    <span className="font-semibold text-brand-navy dark:text-white">{eod.team_name}</span>
+                                  </div>
+                                ) : '—'}
+                              </td>
+                              <td className="px-4 py-3">
+                                {eod.supervisor_name ? (
+                                  <button
+                                    onClick={() => { setDetailSupervisorId(eod.supervisor_id ?? null); setExpandedEOD(null) }}
+                                    className="flex items-center gap-2 group"
+                                  >
+                                    <AvatarDisplay
+                                      name={eod.supervisor_name}
+                                      avatarUrl={eod.supervisor_avatar_url}
+                                      size="xs"
+                                      bgClass="bg-brand-navy/10 dark:bg-white/10 group-hover:bg-brand-teal/20"
+                                      className="transition-colors text-[9px] font-bold text-brand-navy dark:text-white"
+                                    />
+                                    <span className="text-slate-700 dark:text-white/70 text-xs group-hover:text-brand-teal transition-colors">{eod.supervisor_name}</span>
+                                  </button>
+                                ) : <span className="text-slate-400 dark:text-white/30">—</span>}
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-brand-navy dark:text-brand-teal">
+                                {eod.pph?.toFixed(2) ?? '—'}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600 dark:text-white/60">
+                                {eod.canvas_hours != null ? `${eod.canvas_hours}h` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600 dark:text-white/60">
+                                {eod.pac_total_amount ? formatCurrency(eod.pac_total_amount) : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-slate-500 dark:text-white/40 max-w-[220px]">
+                                <TruncatedNote note={eod.note} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
