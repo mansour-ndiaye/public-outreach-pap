@@ -7,7 +7,7 @@ import Image from 'next/image'
 import { useTranslations } from 'next-intl'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { LocaleToggle } from '@/components/ui/LocaleToggle'
-import { AvatarButton } from '@/components/ui/AvatarButton'
+import { AvatarDisplay } from '@/components/ui/AvatarButton'
 import { NotificationBell } from '@/components/ui/NotificationBell'
 import { signOut } from '@/lib/supabase/actions'
 import { cn } from '@/lib/utils'
@@ -153,9 +153,8 @@ export function AdminShell({ children, user, locale }: AdminShellProps) {
 
       {/* User info + logout */}
       <div className="px-3 pb-4 pt-3 border-t border-white/10 shrink-0 space-y-1">
-        <div className="flex items-center gap-2.5 px-3 py-2">
-          <AvatarButton
-            userId={user.id}
+        <Link href={`/${locale}/profile`} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/8 transition-colors">
+          <AvatarDisplay
             name={displayName}
             avatarUrl={user.avatar_url}
             size="xs"
@@ -165,7 +164,7 @@ export function AdminShell({ children, user, locale }: AdminShellProps) {
             <p className="text-white text-xs font-semibold truncate leading-tight">{displayName}</p>
             <p className="text-white/40 text-[10px] truncate leading-tight">{user.email}</p>
           </div>
-        </div>
+        </Link>
         <button
           onClick={handleLogout}
           className={cn(

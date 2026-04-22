@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { LocaleToggle } from '@/components/ui/LocaleToggle'
-import { AvatarButton } from '@/components/ui/AvatarButton'
+import { AvatarDisplay } from '@/components/ui/AvatarButton'
 import { NotificationBell } from '@/components/ui/NotificationBell'
 import { signOut } from '@/lib/supabase/actions'
 import { cn } from '@/lib/utils'
@@ -62,18 +62,19 @@ export function ManagerShell({ children, user, locale }: ManagerShellProps) {
         {/* Right: user info + controls */}
         <div className="flex items-center gap-2">
           {/* User badge */}
-          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-white/[0.06]">
-            <AvatarButton
-              userId={user.id}
+          <Link
+            href={`/${locale}/profile`}
+            className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.10] transition-colors"
+          >
+            <AvatarDisplay
               name={displayName}
               avatarUrl={user.avatar_url}
               size="xs"
-              locale={locale}
             />
             <span className="font-body text-xs font-semibold text-slate-700 dark:text-white/70">
               {displayName}
             </span>
-          </div>
+          </Link>
 
           <NotificationBell userId={user.id} locale={locale} />
           <LocaleToggle />

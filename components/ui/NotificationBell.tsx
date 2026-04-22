@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useTransition, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   fetchNotifications,
@@ -59,10 +60,16 @@ interface NotificationBellProps {
 
 export function NotificationBell({ userId, locale }: NotificationBellProps) {
   const isFr = locale !== 'en'
+  const router = useRouter()
   const [notifications, setNotifications] = useState<NotificationWithSender[]>([])
   const [panelOpen, setPanelOpen]         = useState(false)
+  const [isMobile, setIsMobile]           = useState(false)
   const [, startTransition]               = useTransition()
   const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setIsMobile(window.matchMedia('(max-width: 639px)').matches)
+  }, [])
 
   // Count unread
   const unreadCount = notifications.filter(n => !n.read).length
@@ -122,9 +129,15 @@ export function NotificationBell({ userId, locale }: NotificationBellProps) {
 
   return (
     <div className="relative" ref={panelRef}>
-      {/* Bell button */}
+      {/* Bell button — mobile: navigate to notifications page; desktop: open panel */}
       <button
-        onClick={() => setPanelOpen(prev => !prev)}
+        onClick={() => {
+          if (isMobile) {
+            router.push(`/${locale ?? 'fr'}/notifications`)
+          } else {
+            setPanelOpen(prev => !prev)
+          }
+        }}
         className={cn(
           'relative flex items-center justify-center w-11 h-11 rounded-full',
           'text-slate-600 dark:text-white/70',

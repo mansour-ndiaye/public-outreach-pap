@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import { BarrePopup } from '@/components/ui/BarrePopup'
 import { deleteStreetFeature } from '@/lib/supabase/eod-actions'
+import { updateTerritory } from '@/lib/supabase/territory-actions'
 import type { TerritoryRow, TeamRow } from '@/types'
 import { SaveTerritoryModal } from './SaveTerritoryModal'
 import { DeleteTerritoryModal } from './DeleteTerritoryModal'
@@ -177,6 +178,14 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     lng: number; lat: number
     entry_id?: string; feature_index?: number
   } | null>(null)
+
+  // Quick-edit / polygon redraw state
+  const [editingTerritoryId, setEditingTerritoryId] = useState<string | null>(null)
+  const [sidebarToast, setSidebarToast] = useState<string | null>(null)
+  const showSidebarToast = (msg: string) => {
+    setSidebarToast(msg)
+    setTimeout(() => setSidebarToast(null), 2500)
+  }
 
   // Edit mode (delete terrain barré)
   const [editMode,           setEditMode]           = useState(false)
@@ -361,7 +370,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     if (drawMode === 'idle') {
       if (editMode) {
         // In edit mode: click on terrain barré to delete
-        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line'] })
+        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line', 'admin-covered-streets-oob-line'] })
         if (barreFeatures?.length) {
           const p = barreFeatures[0].properties ?? {}
           const entryId      = p.entry_id as string | undefined
@@ -405,7 +414,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
       } else {
         setTooltipInfo(null)
         // Check for covered streets hover
-        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line'] })
+        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line', 'admin-covered-streets-oob-line'] })
         if (barreFeatures?.length) {
           const p = barreFeatures[0].properties ?? {}
           setBarreHover({
@@ -453,7 +462,26 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     setSaveCoords(null)
     setDraftPoints([])
     setDrawMode('idle')
+    setEditingTerritoryId(null)
   }, [])
+
+  // Called when polygon is finished and we're redrawing an existing territory
+  const handlePolygonRedrawFinish = useCallback(async (coords: number[][][]) => {
+    if (!editingTerritoryId) return
+    const res = await updateTerritory(editingTerritoryId, { coordinates: coords })
+    if (res.error) {
+      showSidebarToast('Erreur: ' + res.error)
+    } else {
+      setTerritories(prev =>
+        prev.map(t => t.id === editingTerritoryId ? { ...t, coordinates: coords } : t)
+      )
+      showSidebarToast('Polygone mis à jour ✓')
+    }
+    setSaveCoords(null)
+    setDraftPoints([])
+    setDrawMode('idle')
+    setEditingTerritoryId(null)
+  }, [editingTerritoryId]) // eslint-disable-line
 
   const handleSaveCancel = useCallback(() => {
     setSaveCoords(null)
@@ -466,6 +494,13 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     setDeleteTarget(null)
     setSelectedId(null)
   }, [])
+
+  // When saveCoords is set during a polygon redraw, auto-save to DB
+  useEffect(() => {
+    if (saveCoords && editingTerritoryId) {
+      handlePolygonRedrawFinish(saveCoords)
+    }
+  }, [saveCoords, editingTerritoryId, handlePolygonRedrawFinish])
 
   // ── Fly to territory ──────────────────────────────────────────────────────────
   const flyTo = useCallback((territory: TerritoryRow) => {
@@ -531,6 +566,13 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
            Desktop: always visible (lg:flex)
            Mobile: shown when sidebarOpen OR when not drawing in idle mode
       ─────────────────────────────────────────────────────────────────────── */}
+      {/* Sidebar toast */}
+      {sidebarToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl shadow-lg bg-brand-teal text-white font-body text-sm font-semibold animate-fade-in pointer-events-none">
+          {sidebarToast}
+        </div>
+      )}
+
       <aside className={cn(
         'flex-shrink-0 flex flex-col overflow-hidden',
         'border-r border-slate-200 dark:border-white/[0.06]',
@@ -543,6 +585,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
         <SidebarContent
           t={t}
           territories={territories}
+          teams={teams}
           counts={counts}
           selectedId={selectedId}
           isDrawing={isDrawing}
@@ -555,6 +598,19 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
           selectedTerritory={selectedTerritory ?? null}
           onDelete={t => setDeleteTarget(t)}
           onClearSelection={() => setSelectedId(null)}
+          onUpdateTerritory={(id, data) => {
+            updateTerritory(id, data).then(res => {
+              if (res.error) { showSidebarToast('Erreur: ' + res.error); return }
+              setTerritories(prev => prev.map(t => t.id === id ? { ...t, ...data } : t))
+              showSidebarToast('Zone mise à jour ✓')
+            })
+          }}
+          onRedrawPolygon={(territory) => {
+            setEditingTerritoryId(territory.id)
+            flyTo(territory)
+            startClickMode()
+            setSidebarOpen(false)
+          }}
         />
       </aside>
 
@@ -589,9 +645,20 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             <Layer id="territories-outline" type="line" paint={outlinePaint} />
           </Source>
 
-          {/* Terrain barré — black #000000 */}
+          {/* Terrain barré — black (in-bounds) + orange (out-of-bounds) */}
           <Source id="admin-covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
-            <Layer id="admin-covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
+            <Layer
+              id="admin-covered-streets-line"
+              type="line"
+              filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
+              paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }}
+            />
+            <Layer
+              id="admin-covered-streets-oob-line"
+              type="line"
+              filter={['==', true, ['get', 'out_of_bounds']]}
+              paint={{ 'line-color': '#f97316', 'line-width': 2.5, 'line-opacity': 0.9 }}
+            />
           </Source>
 
           {/* Hover tooltip for terrain barré — hidden in edit mode */}
@@ -1015,6 +1082,14 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
                 <span className="font-body text-xs text-slate-600 dark:text-white/60">{label}</span>
               </div>
             ))}
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-5 h-[3px] rounded-full bg-black shrink-0" />
+              <span className="font-body text-xs text-slate-600 dark:text-white/60">{locale !== 'en' ? 'Terrain barré' : 'Covered streets'}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-[3px] rounded-full bg-[#f97316] shrink-0" />
+              <span className="font-body text-xs text-slate-600 dark:text-white/60">{locale !== 'en' ? 'Hors zone' : 'Out-of-bounds'}</span>
+            </div>
           </div>
         )}
       </div>
@@ -1044,6 +1119,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
 interface SidebarContentProps {
   t: ReturnType<typeof useTranslations<'admin.territories'>>
   territories: TerritoryRow[]
+  teams: TeamRow[]
   counts: { active: number; pending: number; inactive: number }
   selectedId: string | null
   isDrawing: boolean
@@ -1053,13 +1129,27 @@ interface SidebarContentProps {
   selectedTerritory: TerritoryRow | null
   onDelete: (t: TerritoryRow) => void
   onClearSelection: () => void
+  onUpdateTerritory: (id: string, data: { name?: string; status?: import('@/types').TerritoryStatus }) => void
+  onRedrawPolygon: (territory: TerritoryRow) => void
 }
 
 function SidebarContent({
-  t, territories, counts, selectedId, isDrawing,
+  t, territories, teams, counts, selectedId, isDrawing,
   onStartDraw, onSelectTerritory, onCloseSidebar,
   selectedTerritory, onDelete, onClearSelection,
+  onUpdateTerritory, onRedrawPolygon,
 }: SidebarContentProps) {
+  const [editingName, setEditingName] = useState(false)
+  const [nameVal, setNameVal] = useState('')
+  const [statusVal, setStatusVal] = useState<import('@/types').TerritoryStatus>('active')
+
+  useEffect(() => {
+    if (selectedTerritory) {
+      setNameVal(selectedTerritory.name)
+      setStatusVal(selectedTerritory.status as import('@/types').TerritoryStatus)
+      setEditingName(false)
+    }
+  }, [selectedTerritory?.id]) // eslint-disable-line
   return (
     <>
       {/* Header */}
@@ -1175,47 +1265,82 @@ function SidebarContent({
         ))}
       </div>
 
-      {/* Selected territory detail panel */}
+      {/* Selected territory quick-edit panel */}
       {selectedTerritory && (
         <div className={cn(
           'border-t border-slate-100 dark:border-white/[0.06]',
-          'px-4 py-4 shrink-0',
+          'px-4 py-4 shrink-0 space-y-3',
           'bg-slate-50/80 dark:bg-white/[0.03]',
         )}>
-          <div className="flex items-start justify-between gap-2 mb-3">
-            <h3 className="font-display text-sm font-semibold text-brand-navy dark:text-white leading-tight">
+          {/* Header row */}
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="font-display text-sm font-semibold text-brand-navy dark:text-white leading-tight truncate">
               {selectedTerritory.name}
             </h3>
-            <button
-              onClick={onClearSelection}
-              aria-label="Close"
-              className="text-slate-300 hover:text-slate-500 dark:text-white/20 dark:hover:text-white/50 shrink-0 mt-0.5 transition-colors"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 6 6 18M6 6l12 12"/>
-              </svg>
+            <button onClick={onClearSelection} aria-label="Close" className="text-slate-300 hover:text-slate-500 dark:text-white/20 dark:hover:text-white/50 shrink-0 mt-0.5 transition-colors">
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
             </button>
           </div>
 
-          <dl className="space-y-1.5 mb-3">
-            {selectedTerritory.sector && (
-              <div className="flex gap-2">
-                <dt className="font-body text-xs text-slate-400 dark:text-white/30 w-16 shrink-0">
-                  {t('detail_sector')}
-                </dt>
-                <dd className="font-body text-xs text-slate-600 dark:text-white/60">
-                  {selectedTerritory.sector}
-                </dd>
-              </div>
-            )}
-            <div className="flex gap-2 items-center">
-              <dt className="font-body text-xs text-slate-400 dark:text-white/30 w-16 shrink-0">
-                {t('detail_status')}
-              </dt>
-              <dd><StatusBadge status={selectedTerritory.status} t={t} /></dd>
+          {/* Inline name edit */}
+          {editingName ? (
+            <div className="flex gap-1.5">
+              <input
+                value={nameVal}
+                onChange={e => setNameVal(e.target.value)}
+                autoFocus
+                className="flex-1 h-8 rounded-lg px-2.5 font-body text-xs border border-brand-teal focus:outline-none bg-white dark:bg-white/[0.05] text-slate-900 dark:text-white"
+              />
+              <button
+                onClick={() => { onUpdateTerritory(selectedTerritory.id, { name: nameVal.trim() || selectedTerritory.name }); setEditingName(false) }}
+                className="h-8 px-2.5 rounded-lg font-body text-xs font-semibold bg-brand-teal text-white"
+              >✓</button>
+              <button onClick={() => { setEditingName(false); setNameVal(selectedTerritory.name) }} className="h-8 px-2 rounded-lg font-body text-xs text-slate-400 hover:text-slate-600 dark:hover:text-white border border-slate-200 dark:border-white/10">✕</button>
             </div>
-          </dl>
+          ) : (
+            <button onClick={() => setEditingName(true)} className="flex items-center gap-1.5 font-body text-xs text-slate-400 dark:text-white/30 hover:text-brand-navy dark:hover:text-white transition-colors">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              Modifier le nom
+            </button>
+          )}
 
+          {/* Status quick-change */}
+          <div>
+            <label className="font-body text-[10px] uppercase tracking-wider text-slate-400 dark:text-white/30 font-semibold block mb-1">Statut</label>
+            <select
+              value={statusVal}
+              onChange={e => {
+                const s = e.target.value as import('@/types').TerritoryStatus
+                setStatusVal(s)
+                onUpdateTerritory(selectedTerritory.id, { status: s })
+              }}
+              className="w-full h-8 rounded-lg px-2.5 font-body text-xs border border-slate-200 dark:border-white/[0.10] bg-white dark:bg-white/[0.05] text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-brand-teal cursor-pointer"
+            >
+              <option value="active">Actif</option>
+              <option value="pending">En attente</option>
+              <option value="inactive">Inactif</option>
+            </select>
+          </div>
+
+          {/* Modifier le polygone */}
+          {!isDrawing && (
+            <button
+              onClick={() => onRedrawPolygon(selectedTerritory)}
+              className={cn(
+                'w-full h-9 rounded-xl font-body text-xs font-semibold',
+                'bg-brand-navy/8 text-brand-navy dark:bg-white/[0.06] dark:text-white/80 border border-brand-navy/15 dark:border-white/[0.10]',
+                'hover:bg-brand-navy/15 dark:hover:bg-white/[0.10] active:scale-[0.98]',
+                'transition-all flex items-center justify-center gap-1.5',
+              )}
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7M9 20l6-3M9 20V7m6 13l4.553 2.276A1 1 0 0021 21.382V10.618a1 1 0 00-.553-.894L15 7m0 13V7M9 7l6-3"/>
+              </svg>
+              Modifier le polygone
+            </button>
+          )}
+
+          {/* Delete */}
           <button
             onClick={() => onDelete(selectedTerritory)}
             className={cn(

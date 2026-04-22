@@ -1,7 +1,7 @@
 'use client'
 
 import {
-  useRef, useState, useCallback, useEffect, useMemo, useTransition,
+  useRef, useState, useCallback, useEffect, useMemo, useTransition, type RefObject,
 } from 'react'
 import { useRouter } from 'next/navigation'
 import Map, {
@@ -68,6 +68,19 @@ function formatDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
+function pointInPolygon(point: [number, number], ring: number[][]): boolean {
+  const [x, y] = point
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1]
+    const xj = ring[j][0], yj = ring[j][1]
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
 type SpeechRecognitionType = {
   lang: string
   continuous: boolean
@@ -87,7 +100,7 @@ interface SupervisorDashboardProps {
   territory:        TerritoryRow | null
   todayZones:       DailyZoneWithTeam[]     // zones assigned to THIS supervisor today
   teamZones:        DailyZoneWithTeam[]     // all zones for the team today (incl. others)
-  todayEOD:         EODEntry | null
+  todayEODs:        EODEntry[]
   eodHistory:       EODEntry[]
   pastStreets:      GeoJSON.FeatureCollection  // own past terrain barré
   teamPastStreets:  GeoJSON.FeatureCollection  // other supervisors' terrain barré
@@ -99,7 +112,7 @@ interface SupervisorDashboardProps {
 export default function SupervisorDashboard({
   teamId, teamName, supervisorId, supervisorName,
   territory, todayZones, teamZones,
-  todayEOD: initialEOD, eodHistory, pastStreets, teamPastStreets,
+  todayEODs, eodHistory, pastStreets, teamPastStreets,
   todayDate, teamColor, locale,
 }: SupervisorDashboardProps) {
   const { resolvedTheme } = useTheme()
@@ -129,8 +142,13 @@ export default function SupervisorDashboard({
   const [isRecording,  setIsRecording]  = useState(false)
   const recognitionRef = useRef<SpeechRecognitionType | null>(null)
 
+  // ── Out-of-bounds state ────────────────────────────────────────────────────
+  const [outOfBoundsFlags, setOutOfBoundsFlags] = useState<boolean[]>([])
+  const [currentLineOOB,   setCurrentLineOOB]   = useState(false)
+
   // ── EOD form state ─────────────────────────────────────────────────────────
-  const [submittedEOD, setSubmittedEOD] = useState<EODEntry | null>(initialEOD)
+  const [submittedEODs, setSubmittedEODs] = useState<EODEntry[]>(todayEODs)
+  const [showNewForm,   setShowNewForm]   = useState(todayEODs.length === 0)
   const [canvasHours,  setCanvasHours]  = useState('')
   const [pacAmount,    setPacAmount]    = useState('')
   const [pacCount,     setPacCount]     = useState('')
@@ -159,6 +177,10 @@ export default function SupervisorDashboard({
   const [expandedEOD, setExpandedEOD]  = useState<string | null>(null)
 
   const [mapStyleUrl, setMapStyle] = useMapStyle(resolvedTheme)
+
+  // ── Fullscreen map ─────────────────────────────────────────────────────────
+  const [isMapFullscreen, setIsMapFullscreen] = useState(false)
+  const mapContainerRef = useRef<HTMLDivElement>(null)
 
   // Map center — use territory centroid or Montreal
   const mapCenter = useMemo((): [number, number] => {
@@ -269,22 +291,32 @@ export default function SupervisorDashboard({
     return null
   }, [todayZones])
 
-  // Covered streets GeoJSON (session)
+  // Covered streets GeoJSON (session) — stamped with out_of_bounds for layer filtering
   const coveredGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
-    const features = [...coveredStreets]
+    const features: GeoJSON.Feature[] = coveredStreets.map((f, i) => ({
+      ...f,
+      properties: { ...f.properties, out_of_bounds: outOfBoundsFlags[i] ?? false },
+    }))
     if (currentLine.length >= 2) {
-      features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: currentLine }, properties: {} })
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: currentLine },
+        properties: { out_of_bounds: currentLineOOB },
+      })
     }
     if (aiPreview) features.push(...aiPreview)
     return { type: 'FeatureCollection', features }
-  }, [coveredStreets, currentLine, aiPreview])
+  }, [coveredStreets, outOfBoundsFlags, currentLine, currentLineOOB, aiPreview])
 
   // Progress — based on ALL zones assigned to this supervisor today
   const progress = useMemo(() => {
     const assignedFeatures = todayZoneGeoJSON.features ?? []
-    const all = [...coveredStreets, ...((submittedEOD?.covered_streets as GeoJSON.FeatureCollection | null)?.features ?? [])]
+    const submittedFeatures = submittedEODs.flatMap(e =>
+      (e.covered_streets as GeoJSON.FeatureCollection | null)?.features ?? []
+    )
+    const all = [...coveredStreets, ...submittedFeatures]
     return computeProgress(all, assignedFeatures)
-  }, [coveredStreets, submittedEOD, todayZoneGeoJSON])
+  }, [coveredStreets, submittedEODs, todayZoneGeoJSON])
 
   // PPH = PAC total $ / canvas hours (auto-calculated)
   const pph = useMemo(() => {
@@ -321,7 +353,13 @@ export default function SupervisorDashboard({
   const handleMapClick = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') {
       const { lng, lat } = e.lngLat
-      setCurrentLine(prev => [...prev, [lng, lat]])
+      const newPoint: [number, number] = [lng, lat]
+      setCurrentLine(prev => [...prev, newPoint])
+      if (!currentLineOOB && territory?.coordinates?.[0]) {
+        if (!pointInPolygon(newPoint, territory.coordinates[0])) {
+          setCurrentLineOOB(true)
+        }
+      }
       return
     }
     if (editMode && drawMode === 'idle') {
@@ -368,6 +406,7 @@ export default function SupervisorDashboard({
         recalls_count:    Number(p.recalls_count)    || 0,
         note:             p.note ?? null,
         streets_count:    Number(p.streets_count)    || 0,
+        out_of_bounds:    p.out_of_bounds === true,
         lng:              e.lngLat.lng,
         lat:              e.lngLat.lat,
         entry_id:         p.entry_id  ?? undefined,
@@ -384,6 +423,15 @@ export default function SupervisorDashboard({
     setCursor(drawMode === 'drawing' ? 'crosshair' : 'grab')
   }, [drawMode])
 
+  useEffect(() => {
+    if (!isMapFullscreen) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsMapFullscreen(false)
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [isMapFullscreen])
+
   const finishStreet = () => {
     if (currentLine.length < 2) return
     setCoveredStreets(prev => [...prev, {
@@ -391,12 +439,19 @@ export default function SupervisorDashboard({
       geometry: { type: 'LineString', coordinates: currentLine },
       properties: {},
     }])
+    setOutOfBoundsFlags(prev => [...prev, currentLineOOB])
     setCurrentLine([])
+    setCurrentLineOOB(false)
   }
 
   const undoStreet = () => {
-    if (currentLine.length > 0) setCurrentLine([])
-    else setCoveredStreets(prev => prev.slice(0, -1))
+    if (currentLine.length > 0) {
+      setCurrentLine([])
+      setCurrentLineOOB(false)
+    } else {
+      setCoveredStreets(prev => prev.slice(0, -1))
+      setOutOfBoundsFlags(prev => prev.slice(0, -1))
+    }
   }
 
   // ── AI assistant ───────────────────────────────────────────────────────────
@@ -511,10 +566,17 @@ export default function SupervisorDashboard({
       return
     }
 
-    // Include in-progress line
-    const allStreets = [...coveredStreets]
+    // Include in-progress line, stamp out_of_bounds on each feature
+    const allStreets: GeoJSON.Feature[] = coveredStreets.map((f, i) => ({
+      ...f,
+      properties: { ...f.properties, out_of_bounds: outOfBoundsFlags[i] ?? false },
+    }))
     if (currentLine.length >= 2) {
-      allStreets.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: currentLine }, properties: {} })
+      allStreets.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: currentLine },
+        properties: { out_of_bounds: currentLineOOB },
+      })
     }
     const fc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: allStreets }
 
@@ -540,7 +602,7 @@ export default function SupervisorDashboard({
         setFormError(result.error)
       } else {
         setSubmitSuccess(true)
-        setSubmittedEOD({
+        const newEntry: EODEntry = {
           id: result.id!,
           assignment_id: null,
           team_id: teamId,
@@ -557,11 +619,50 @@ export default function SupervisorDashboard({
           note: fieldNote || null,
           covered_streets: fc as unknown as GeoJSON.FeatureCollection,
           created_at: new Date().toISOString(),
-        })
+        }
+        setSubmittedEODs(prev => [...prev, newEntry])
+        setShowNewForm(false)
         setCoveredStreets([])
         setCurrentLine([])
+        setOutOfBoundsFlags([])
+        setCurrentLineOOB(false)
+        setCanvasHours('')
+        setPacAmount('')
+        setPacCount('')
+        setRecalls([])
+        setPfu('')
+        setFieldNote('')
       }
     })
+  }
+
+  // Group history by date for display (exclude today since shown separately above)
+  const groupedHistory = useMemo(() => {
+    const groups: Record<string, EODEntry[]> = {}
+    for (const entry of eodHistory) {
+      if (entry.entry_date === todayDate) continue
+      const d = entry.entry_date ?? 'unknown'
+      if (!groups[d]) groups[d] = []
+      groups[d].push(entry)
+    }
+    return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
+  }, [eodHistory, todayDate])
+
+  const handleSubmitAnother = () => {
+    setShowNewForm(true)
+    setDrawMode('idle')
+    setCoveredStreets([])
+    setCurrentLine([])
+    setOutOfBoundsFlags([])
+    setCurrentLineOOB(false)
+    setCanvasHours('')
+    setPacAmount('')
+    setPacCount('')
+    setRecalls([])
+    setPfu('')
+    setFieldNote('')
+    setFormError('')
+    setSubmitSuccess(false)
   }
 
   return (
@@ -636,7 +737,15 @@ export default function SupervisorDashboard({
         ))}
 
         {/* Map container */}
-        <div className="relative rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/[0.07] shadow-card h-[260px] sm:h-[380px]">
+        <div
+          ref={mapContainerRef}
+          className={cn(
+            'relative overflow-hidden transition-[border-radius] duration-200',
+            isMapFullscreen
+              ? 'fixed inset-0 z-50 rounded-none bg-black'
+              : 'rounded-2xl border border-slate-200/80 dark:border-white/[0.07] shadow-card h-[260px] sm:h-[380px]',
+          )}
+        >
           <Map
             ref={mapRef}
             mapboxAccessToken={MAPBOX_TOKEN}
@@ -679,9 +788,20 @@ export default function SupervisorDashboard({
               <Layer id="today-zone-line" type="line" paint={{ 'line-color': '#22c55e', 'line-width': 4, 'line-opacity': 1 }} />
             </Source>
 
-            {/* Drawing in progress (orange) */}
+            {/* Drawing in progress — orange for in-bounds, red for out-of-bounds */}
             <Source id="covered" type="geojson" data={coveredGeoJSON}>
-              <Layer id="covered-line" type="line" paint={{ 'line-color': '#f97316', 'line-width': 4, 'line-opacity': 0.95 }} />
+              <Layer
+                id="covered-line"
+                type="line"
+                filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
+                paint={{ 'line-color': '#f97316', 'line-width': 4, 'line-opacity': 0.95 }}
+              />
+              <Layer
+                id="covered-oob-line"
+                type="line"
+                filter={['==', true, ['get', 'out_of_bounds']]}
+                paint={{ 'line-color': '#ef4444', 'line-width': 4, 'line-opacity': 0.95 }}
+              />
             </Source>
 
             {/* "Votre terrain" label on own terrain du jour */}
@@ -766,6 +886,67 @@ export default function SupervisorDashboard({
             onSelect={setMapStyle}
           />
 
+          {/* Fullscreen toggle button */}
+          <button
+            onClick={() => setIsMapFullscreen(prev => !prev)}
+            aria-label={isMapFullscreen
+              ? (locale !== 'en' ? 'Réduire la carte' : 'Exit fullscreen')
+              : (locale !== 'en' ? 'Agrandir la carte' : 'Fullscreen')}
+            className={cn(
+              'absolute right-2 z-20 transition-[bottom] duration-200',
+              isMapFullscreen && showNewForm && todayZones.length > 0 && !isTouch
+                ? 'bottom-[60px]'
+                : 'bottom-2',
+              'w-9 h-9 rounded-xl flex items-center justify-center',
+              'bg-white/95 dark:bg-[#12163a]/95',
+              'border border-slate-200/80 dark:border-white/[0.12]',
+              'shadow-md backdrop-blur-sm',
+              'text-slate-700 dark:text-white/80',
+              'hover:bg-slate-50 dark:hover:bg-white/[0.1]',
+            )}
+          >
+            {isMapFullscreen ? (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/>
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+              </svg>
+            )}
+          </button>
+
+          {/* Fullscreen in-map drawing controls — desktop only (mobile uses fixed bar) */}
+          {isMapFullscreen && !isTouch && showNewForm && todayZones.length > 0 && (
+            <div className={cn(
+              'absolute bottom-0 left-0 right-0 z-20',
+              'flex items-center gap-2 px-4 py-3',
+              'bg-white/95 dark:bg-[#12163a]/95 backdrop-blur-sm',
+              'border-t border-slate-200/80 dark:border-white/[0.08] shadow-2xl',
+            )}>
+              {drawMode === 'idle' ? (
+                <button onClick={() => setDrawMode('drawing')} className={cn(btnPrimary, 'flex-1 min-h-[44px]')}>
+                  <IconPencil />{t('map.draw_hint')}
+                </button>
+              ) : (
+                <>
+                  <button onClick={finishStreet} disabled={currentLine.length < 2} className={cn(btnPrimary, 'flex-1 min-h-[44px]')}>
+                    <IconCheck />{t('map.finish_street')}
+                  </button>
+                  <button onClick={undoStreet} className={cn(btnGhost, 'flex-1 min-h-[44px]')}>
+                    {t('map.undo_street')}
+                  </button>
+                  <button onClick={() => { setDrawMode('idle'); setCurrentLine([]) }} className={cn(btnGhost, 'min-h-[44px] px-4')}>✕</button>
+                </>
+              )}
+              {coveredStreets.length > 0 && (
+                <span className="ml-auto font-body text-xs text-slate-500 dark:text-white/40 whitespace-nowrap">
+                  {coveredStreets.length} {t('history.streets_drawn')}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Delete confirmation dialog */}
           {deleteTarget && (
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -822,6 +1003,18 @@ export default function SupervisorDashboard({
           )}
         </div>
 
+        {/* Out-of-bounds warning banner */}
+        {(outOfBoundsFlags.some(Boolean) || currentLineOOB) && (
+          <div className="flex items-center gap-2 mt-2 px-4 py-2.5 rounded-xl bg-brand-red/10 border border-brand-red/20 text-brand-red font-body text-sm">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+            {locale !== 'en'
+              ? 'Certaines rues sont hors du territoire assigné'
+              : 'Some streets are outside the assigned territory'}
+          </div>
+        )}
+
         {/* Legend + Team Toggle */}
         <div className="flex items-start justify-between gap-2 mt-3 px-1">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -830,6 +1023,7 @@ export default function SupervisorDashboard({
               { color: '#22c55e', label: t('map.legend_assigned_own') },
               { color: '#ef4444', label: t('map.legend_assigned_others') },
               { color: '#000000', label: t('map.legend_barre') },
+              { color: '#f97316', label: locale !== 'en' ? 'Tracé en cours' : 'In progress' },
             ].map(({ color, label }) => (
               <div key={label} className="flex items-center gap-1.5">
                 <div className="w-5 h-[3px] rounded-full" style={{ backgroundColor: color }} />
@@ -892,12 +1086,12 @@ export default function SupervisorDashboard({
         </div>
 
         {/* Drawing controls — only when terrain du jour is assigned */}
-        {!submittedEOD && todayZones.length === 0 && (
+        {showNewForm && todayZones.length === 0 && (
           <div className="mt-4 rounded-2xl border border-slate-200 dark:border-white/[0.07] px-4 py-3 font-body text-sm text-slate-500 dark:text-white/40">
             {t('map.no_turf_assigned')}
           </div>
         )}
-        {!submittedEOD && todayZones.length > 0 && (
+        {showNewForm && todayZones.length > 0 && (
           <div className="mt-4 space-y-3">
             <p className="font-body text-xs text-slate-500 dark:text-white/40 font-semibold uppercase tracking-wide">
               {isTouch
@@ -1005,48 +1199,61 @@ export default function SupervisorDashboard({
           {t('eod.title')}
         </h2>
 
-        {submittedEOD ? (
-          /* Already submitted */
-          <div className={cn(
-            'rounded-2xl border border-brand-teal/30 bg-brand-teal/10 p-6 space-y-4',
-          )}>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-brand-teal flex items-center justify-center text-white">
-                <IconCheck />
-              </div>
-              <div>
-                <p className="font-display font-bold text-brand-teal">{t('eod.submitted_title')}</p>
-                <p className="font-body text-sm text-slate-600 dark:text-white/60">{t('eod.submitted_desc')}</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label: 'PPH', value: submittedEOD.pph.toFixed(2) },
-                { label: t('eod.canvas_hours'), value: `${submittedEOD.canvas_hours ?? 0}h` },
-                { label: 'PAC $', value: `$${submittedEOD.pac_total_amount}` },
-                { label: t('eod.recalls'), value: String(submittedEOD.recalls?.length ?? submittedEOD.recalls_count ?? 0) },
-                { label: t('eod.pfu'), value: String(submittedEOD.pfu ?? 0) },
-              ].map(({ label, value }) => (
-                <div key={label} className="rounded-xl bg-white/50 dark:bg-white/[0.05] p-3">
-                  <p className="font-body text-[10px] text-slate-500 dark:text-white/40 uppercase tracking-wide">{label}</p>
-                  <p className="font-display text-lg font-bold text-brand-navy dark:text-white">{value}</p>
+        {submittedEODs.length > 0 && !showNewForm ? (
+          /* Already submitted today — show last + allow another */
+          (() => {
+            const last = submittedEODs[submittedEODs.length - 1]
+            return (
+              <div className={cn('rounded-2xl border border-brand-teal/30 bg-brand-teal/10 p-6 space-y-4')}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-brand-teal flex items-center justify-center text-white shrink-0">
+                      <IconCheck />
+                    </div>
+                    <div>
+                      <p className="font-display font-bold text-brand-teal">{t('eod.submitted_title')}</p>
+                      {submittedEODs.length > 1 && (
+                        <span className="inline-flex px-2 py-0.5 rounded-full bg-brand-teal/20 text-brand-teal font-body text-[11px] font-semibold mt-0.5">
+                          {submittedEODs.length} {locale !== 'en' ? 'rapports aujourd\'hui' : 'reports today'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
-            {/* Today's terrain barré mini-map */}
-            <EodMiniMap
-              coveredStreets={submittedEOD.covered_streets as GeoJSON.FeatureCollection | null}
-              locale={locale}
-              height={120}
-              supervisorName={supervisorName}
-              teamName={teamName}
-              date={todayDate}
-            />
-
-            {submittedEOD.note && (
-              <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">"{submittedEOD.note}"</p>
-            )}
-          </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label: 'PPH', value: last.pph.toFixed(2) },
+                    { label: t('eod.canvas_hours'), value: `${last.canvas_hours ?? 0}h` },
+                    { label: 'PAC $', value: `$${last.pac_total_amount}` },
+                    { label: t('eod.recalls'), value: String(last.recalls?.length ?? last.recalls_count ?? 0) },
+                    { label: t('eod.pfu'), value: String(last.pfu ?? 0) },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="rounded-xl bg-white/50 dark:bg-white/[0.05] p-3">
+                      <p className="font-body text-[10px] text-slate-500 dark:text-white/40 uppercase tracking-wide">{label}</p>
+                      <p className="font-display text-lg font-bold text-brand-navy dark:text-white">{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <EodMiniMap
+                  coveredStreets={last.covered_streets as GeoJSON.FeatureCollection | null}
+                  locale={locale}
+                  height={120}
+                  supervisorName={supervisorName}
+                  teamName={teamName}
+                  date={todayDate}
+                />
+                {last.note && (
+                  <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">"{last.note}"</p>
+                )}
+                <button
+                  onClick={handleSubmitAnother}
+                  className={cn(btnGhost, 'w-full min-h-[44px]')}
+                >
+                  {locale !== 'en' ? '+ Soumettre un autre rapport' : '+ Submit another report'}
+                </button>
+              </div>
+            )
+          })()
         ) : (
           /* EOD Form */
           <form onSubmit={e => { e.preventDefault(); handleSubmitEOD() }} className="space-y-5">
@@ -1150,93 +1357,105 @@ export default function SupervisorDashboard({
             : t('history.title')}
         </h2>
 
-        {eodHistory.length === 0 ? (
+        {groupedHistory.length === 0 ? (
           <p className="font-body text-sm text-slate-500 dark:text-white/40">{t('history.empty')}</p>
         ) : (
-          <div className="space-y-2">
-            {eodHistory.map(entry => {
-              const isExpanded = expandedEOD === entry.id
-              const fc = entry.covered_streets as unknown as GeoJSON.FeatureCollection | null
-              const streetCount = fc?.features?.length ?? 0
-              return (
-                <div
-                  key={entry.id}
-                  className={cn(
-                    'rounded-2xl border overflow-hidden transition-all duration-200',
-                    'border-slate-200/80 dark:border-white/[0.07]',
-                    'bg-white dark:bg-white/[0.02]',
-                  )}
-                >
-                  {/* Row */}
-                  <button
-                    onClick={() => setExpandedEOD(isExpanded ? null : entry.id)}
-                    className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-50 dark:hover:bg-white/[0.03] transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <span className="font-body text-sm font-semibold text-brand-navy dark:text-white whitespace-nowrap">
-                        {entry.entry_date ? formatDate(entry.entry_date) : '—'}
-                      </span>
-                      <span className="font-body text-sm text-brand-teal font-bold">
-                        PPH {entry.pph?.toFixed(2)}
-                      </span>
-                      <span className="hidden sm:block font-body text-sm text-slate-500 dark:text-white/40">
-                        {entry.canvas_hours != null ? `${entry.canvas_hours}h` : ''}
-                      </span>
-                      <span className="hidden sm:block font-body text-sm text-slate-600 dark:text-white/60">
-                        {entry.pac_total_amount ? `$${entry.pac_total_amount}` : ''}
-                      </span>
-                    </div>
-                    <svg
-                      className={cn('w-4 h-4 text-slate-400 transition-transform duration-200', isExpanded && 'rotate-180')}
-                      fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+          <div className="space-y-4">
+            {groupedHistory.map(([date, entries]) => (
+              <div key={date} className="space-y-2">
+                {entries.length > 1 && (
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="font-body text-xs font-semibold text-slate-500 dark:text-white/40">
+                      {formatDate(date)}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded-full bg-brand-teal/10 text-brand-teal font-body text-[10px] font-bold">
+                      {entries.length} {locale !== 'en' ? 'rapports' : 'reports'}
+                    </span>
+                  </div>
+                )}
+                {entries.map(entry => {
+                  const isExpanded = expandedEOD === entry.id
+                  const fc = entry.covered_streets as unknown as GeoJSON.FeatureCollection | null
+                  const streetCount = fc?.features?.length ?? 0
+                  return (
+                    <div
+                      key={entry.id}
+                      className={cn(
+                        'rounded-2xl border overflow-hidden transition-all duration-200',
+                        'border-slate-200/80 dark:border-white/[0.07]',
+                        'bg-white dark:bg-white/[0.02]',
+                      )}
                     >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
+                      <button
+                        onClick={() => setExpandedEOD(isExpanded ? null : entry.id)}
+                        className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-50 dark:hover:bg-white/[0.03] transition-colors"
+                      >
+                        <div className="flex items-center gap-4">
+                          <span className="font-body text-sm font-semibold text-brand-navy dark:text-white whitespace-nowrap">
+                            {entries.length > 1
+                              ? `Rapport ${entries.indexOf(entry) + 1}`
+                              : (entry.entry_date ? formatDate(entry.entry_date) : '—')}
+                          </span>
+                          <span className="font-body text-sm text-brand-teal font-bold">
+                            PPH {entry.pph?.toFixed(2)}
+                          </span>
+                          <span className="hidden sm:block font-body text-sm text-slate-500 dark:text-white/40">
+                            {entry.canvas_hours != null ? `${entry.canvas_hours}h` : ''}
+                          </span>
+                          <span className="hidden sm:block font-body text-sm text-slate-600 dark:text-white/60">
+                            {entry.pac_total_amount ? `$${entry.pac_total_amount}` : ''}
+                          </span>
+                        </div>
+                        <svg
+                          className={cn('w-4 h-4 text-slate-400 transition-transform duration-200', isExpanded && 'rotate-180')}
+                          fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
 
-                  {/* Expanded content */}
-                  {isExpanded && (
-                    <div className="px-5 pb-5 pt-2 border-t border-slate-100 dark:border-white/[0.04] space-y-3">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        {[
-                          { label: 'PPH', value: entry.pph?.toFixed(2) ?? '—' },
-                          { label: t('history.col_hours'), value: entry.canvas_hours != null ? `${entry.canvas_hours}h` : '—' },
-                          { label: t('history.col_pac'), value: entry.pac_total_amount ? `$${entry.pac_total_amount}` : '—' },
-                          { label: 'PACs', value: String(entry.pac_count || '—') },
-                          { label: t('history.col_pfu'), value: String(entry.pfu ?? 0) },
-                        ].map(({ label, value }) => (
-                          <div key={label} className="rounded-xl bg-slate-50 dark:bg-white/[0.04] p-3">
-                            <p className="font-body text-[10px] text-slate-500 dark:text-white/40 uppercase tracking-wide">{label}</p>
-                            <p className="font-display text-base font-bold text-brand-navy dark:text-white">{value}</p>
+                      {isExpanded && (
+                        <div className="px-5 pb-5 pt-2 border-t border-slate-100 dark:border-white/[0.04] space-y-3">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            {[
+                              { label: 'PPH', value: entry.pph?.toFixed(2) ?? '—' },
+                              { label: t('history.col_hours'), value: entry.canvas_hours != null ? `${entry.canvas_hours}h` : '—' },
+                              { label: t('history.col_pac'), value: entry.pac_total_amount ? `$${entry.pac_total_amount}` : '—' },
+                              { label: 'PACs', value: String(entry.pac_count || '—') },
+                              { label: t('history.col_pfu'), value: String(entry.pfu ?? 0) },
+                            ].map(({ label, value }) => (
+                              <div key={label} className="rounded-xl bg-slate-50 dark:bg-white/[0.04] p-3">
+                                <p className="font-body text-[10px] text-slate-500 dark:text-white/40 uppercase tracking-wide">{label}</p>
+                                <p className="font-display text-base font-bold text-brand-navy dark:text-white">{value}</p>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                      {/* Terrain barré mini-map */}
-                      <EodMiniMap
-                        coveredStreets={fc}
-                        locale={locale}
-                        height={120}
-                        supervisorName={supervisorName}
-                        teamName={teamName}
-                        date={entry.entry_date ?? undefined}
-                      />
-
-                      {streetCount > 0 && (
-                        <p className="font-body text-xs text-slate-400 dark:text-white/30">
-                          {streetCount} {t('history.streets_drawn')}
-                        </p>
+                          <EodMiniMap
+                            coveredStreets={fc}
+                            locale={locale}
+                            height={120}
+                            supervisorName={supervisorName}
+                            teamName={teamName}
+                            date={entry.entry_date ?? undefined}
+                          />
+                          {streetCount > 0 && (
+                            <p className="font-body text-xs text-slate-400 dark:text-white/30">
+                              {streetCount} {t('history.streets_drawn')}
+                            </p>
+                          )}
+                          {entry.note && (
+                            <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">
+                              "{entry.note.length > 80 ? entry.note.slice(0, 80) + '…' : entry.note}"
+                            </p>
+                          )}
+                          <RecallsDisplay recalls={entry.recalls} locale={locale} />
+                        </div>
                       )}
-                      {entry.note && (
-                        <p className="font-body text-sm text-slate-600 dark:text-white/60 italic">
-                          "{entry.note.length > 80 ? entry.note.slice(0, 80) + '…' : entry.note}"
-                        </p>
-                      )}
-                      <RecallsDisplay recalls={entry.recalls} locale={locale} />
                     </div>
-                  )}
-                </div>
-              )
-            })}
+                  )
+                })}
+              </div>
+            ))}
           </div>
         )}
       </section>
@@ -1244,7 +1463,7 @@ export default function SupervisorDashboard({
       </>}
 
       {/* ── MOBILE drawing bar: fixed bottom bar when drawing on touch device ── */}
-      {isTouch && drawMode === 'drawing' && !submittedEOD && (
+      {isTouch && drawMode === 'drawing' && showNewForm && (
         <div className={cn(
           'fixed inset-x-0 bottom-0 z-50',
           'flex items-center gap-3 px-4 safe-bottom',

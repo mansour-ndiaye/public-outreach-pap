@@ -127,6 +127,56 @@ export async function updateAvatarUrl(
   }
 }
 
+// ── Reset user password (sends recovery email) ───────────────────────────────
+export async function resetUserPassword(userId: string): Promise<{ error?: string }> {
+  try {
+    await requireAdmin()
+    const admin = createAdminClient()
+    const { data: { user }, error: userError } = await admin.auth.admin.getUserById(userId)
+    if (userError || !user?.email) return { error: userError?.message ?? 'User not found' }
+    const { error } = await admin.auth.admin.generateLink({ type: 'recovery', email: user.email })
+    if (error) return { error: error.message }
+    return {}
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
+// ── Update own profile (display name) ────────────────────────────────────────
+export async function updateProfile(data: { full_name?: string }): Promise<{ error?: string }> {
+  try {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { error: 'Unauthorized' }
+
+    const admin = createAdminClient()
+    const { error } = await admin.from('users').update(data).eq('id', user.id)
+    if (error) return { error: error.message }
+
+    revalidatePath('/fr/supervisor/dashboard')
+    revalidatePath('/en/supervisor/dashboard')
+    revalidatePath('/fr/manager/dashboard')
+    revalidatePath('/en/manager/dashboard')
+    revalidatePath('/fr/admin/dashboard')
+    revalidatePath('/en/admin/dashboard')
+    return {}
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
+// ── Update own password ───────────────────────────────────────────────────────
+export async function updatePassword(newPassword: string): Promise<{ error?: string }> {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) return { error: error.message }
+    return {}
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+}
+
 // ── Delete user ───────────────────────────────────────────────────────────────
 export async function deleteUser(userId: string): Promise<{ error?: string }> {
   try {

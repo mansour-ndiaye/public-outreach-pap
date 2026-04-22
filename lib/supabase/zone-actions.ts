@@ -257,3 +257,50 @@ export async function createDailyZone(data: {
 
   return { id: zone.id }
 }
+
+// ── Update a daily zone's streets ─────────────────────────────────────────────
+export async function updateDailyZone(
+  zoneId: string,
+  streets: GeoJSON.FeatureCollection,
+): Promise<{ error?: string }> {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any)
+    .from('daily_zones')
+    .update({ streets })
+    .eq('id', zoneId)
+
+  if (error) return { error: error.message }
+  revalidatePath('/fr/manager/dashboard')
+  revalidatePath('/en/manager/dashboard')
+  revalidatePath('/fr/admin/manager')
+  revalidatePath('/en/admin/manager')
+  revalidatePath('/fr/supervisor/dashboard')
+  revalidatePath('/en/supervisor/dashboard')
+  return {}
+}
+
+// ── Delete a daily zone ───────────────────────────────────────────────────────
+export async function deleteDailyZone(zoneId: string): Promise<{ error?: string }> {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any)
+    .from('daily_zones')
+    .delete()
+    .eq('id', zoneId)
+
+  if (error) return { error: error.message }
+  revalidatePath('/fr/manager/dashboard')
+  revalidatePath('/en/manager/dashboard')
+  revalidatePath('/fr/admin/manager')
+  revalidatePath('/en/admin/manager')
+  revalidatePath('/fr/supervisor/dashboard')
+  revalidatePath('/en/supervisor/dashboard')
+  return {}
+}

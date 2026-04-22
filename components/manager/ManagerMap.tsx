@@ -8,7 +8,7 @@ import Map, {
 import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
-import { createDailyZone, fetchSupervisorsForTeam } from '@/lib/supabase/zone-actions'
+import { createDailyZone, fetchSupervisorsForTeam, updateDailyZone, deleteDailyZone } from '@/lib/supabase/zone-actions'
 import { deleteStreetFeature } from '@/lib/supabase/eod-actions'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import { BarrePopup } from '@/components/ui/BarrePopup'
@@ -86,6 +86,9 @@ function buildZonesGeoJSON(
           ...f.properties,
           team_id: zone.team_id, team_name: zone.team_name,
           date: zone.date, color: getColor(colorMap, zone.team_id),
+          zone_id: zone.id,
+          supervisor_id: zone.supervisor_id ?? null,
+          supervisor_name: zone.supervisor_name ?? null,
         },
       })
     }
@@ -147,6 +150,23 @@ export default function ManagerMap({
   const [assignConfirm, setAssignConfirm] = useState<{
     supervisorName: string; teamName: string; date: string; streetCount: number
   } | null>(null)
+
+  // Next-action overlay (shown after assignConfirm dismisses)
+  const [showNextAction, setShowNextAction] = useState(false)
+
+  // Zone popup (click on terrain du jour line)
+  const [zonePopup, setZonePopup] = useState<{
+    zoneId: string; supervisorName: string | null; supervisorId: string | null
+    teamName: string; date: string; lng: number; lat: number
+  } | null>(null)
+
+  // Zone edit/delete state
+  const [editingZoneId, setEditingZoneId] = useState<string | null>(null)
+  const [zoneDeleteConfirm, setZoneDeleteConfirm] = useState<{
+    zoneId: string; supervisorName: string | null; teamName: string
+  } | null>(null)
+  const [deletingZone, setDeletingZone] = useState(false)
+  const [deleteZoneError, setDeleteZoneError] = useState('')
 
   // Assignment form
   const [formTeamId,       setFormTeamId]       = useState('')
@@ -240,6 +260,25 @@ export default function ManagerMap({
       setCurrentLine(prev => [...prev, [lng, lat]])
       return
     }
+    if (!editMode && drawMode === 'idle' && !panelOpen) {
+      const zoneFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['today-zones-line'] })
+      if (zoneFeatures?.length) {
+        const p = zoneFeatures[0].properties ?? {}
+        const zoneId = p.zone_id as string | undefined
+        if (zoneId) {
+          setZonePopup({
+            zoneId,
+            supervisorName: (p.supervisor_name as string | null) ?? null,
+            supervisorId:   (p.supervisor_id   as string | null) ?? null,
+            teamName:       (p.team_name        as string) ?? '—',
+            date:           (p.date             as string) ?? '—',
+            lng: e.lngLat.lng,
+            lat: e.lngLat.lat,
+          })
+          return
+        }
+      }
+    }
     if (editMode && drawMode === 'idle') {
       const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line'] })
       if (features?.length) {
@@ -257,7 +296,7 @@ export default function ManagerMap({
         }
       }
     }
-  }, [drawMode, editMode])
+  }, [drawMode, editMode, panelOpen])
 
   const handleMouseMove = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') { setBarreHover(null); return }
@@ -317,12 +356,12 @@ export default function ManagerMap({
     setAiPreview(null)
     setAiError('')
     setAssignConfirm(null)
+    setEditingZoneId(null)
     recognitionRef.current?.stop()
     setIsRecording(false)
   }
 
-  // After saving, reset drawing state so Alicia can draw another zone
-  // for the same supervisor without closing the panel
+  // After saving, reset drawing state so another zone can be drawn
   const resetForAnotherZone = () => {
     setDrawMode('idle')
     setCurrentLine([])
@@ -333,8 +372,25 @@ export default function ManagerMap({
     setSaveSuccess(false)
     setSaveError('')
     setAssignConfirm(null)
+    setEditingZoneId(null)
     // keep formTeamId, formSupervisorId, formDate, formNote
   }
+
+  // Dismiss the assign confirmation and show next-action prompt
+  const handleAssignConfirmDismiss = useCallback(() => {
+    setAssignConfirm(null)
+    setShowNextAction(true)
+    setPanelOpen(false)
+    setDrawMode('idle')
+    setCurrentLine([])
+    setDrawnStreets([])
+    setSaveSuccess(false)
+    setSaveError('')
+    setAiInput('')
+    setAiPreview(null)
+    setAiError('')
+    setEditingZoneId(null)
+  }, [])
 
   const startDrawing = () => {
     if (!formTeamId) { setSaveError(locale !== 'en' ? 'Sélectionnez une équipe' : 'Select a team'); return }
@@ -461,9 +517,9 @@ export default function ManagerMap({
   // ── Auto-dismiss assign confirmation after 3s ─────────────────────────────
   useEffect(() => {
     if (!assignConfirm) return
-    const timer = setTimeout(() => setAssignConfirm(null), 3000)
+    const timer = setTimeout(() => handleAssignConfirmDismiss(), 3000)
     return () => clearTimeout(timer)
-  }, [assignConfirm])
+  }, [assignConfirm, handleAssignConfirmDismiss])
 
   // ── Delete confirmation handler ────────────────────────────────────────────
   const handleDeleteConfirm = useCallback(async () => {
@@ -480,7 +536,7 @@ export default function ManagerMap({
     }
   }, [deleteTarget, router])
 
-  // ── Save zone ─────────────────────────────────────────────────────────────────
+  // ── Save zone (create or update) ─────────────────────────────────────────────
   const saveZone = async () => {
     const allStreets = [...drawnStreets]
     if (currentLine.length >= 2) {
@@ -495,20 +551,29 @@ export default function ManagerMap({
     setSaving(true)
     setSaveError('')
     const fc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: allStreets }
-    const result = await createDailyZone({
-      team_id:       formTeamId,
-      supervisor_id: formSupervisorId || null,
-      date:          formDate,
-      streets:       fc,
-      note:          formNote,
-    })
+
+    let result: { id?: string; error?: string }
+    if (editingZoneId) {
+      result = await updateDailyZone(editingZoneId, fc)
+    } else {
+      result = await createDailyZone({
+        team_id:       formTeamId,
+        supervisor_id: formSupervisorId || null,
+        date:          formDate,
+        streets:       fc,
+        note:          formNote,
+      })
+    }
     setSaving(false)
 
     if (result.error) {
       setSaveError(result.error)
+    } else if (editingZoneId) {
+      setEditingZoneId(null)
+      closePanel()
+      router.refresh()
     } else {
       setSaveSuccess(true)
-      // Show assignment confirmation popup
       const supName = supervisors.find(s => s.id === formSupervisorId)?.full_name
         ?? supervisors.find(s => s.id === formSupervisorId)?.email
         ?? '—'
@@ -520,7 +585,6 @@ export default function ManagerMap({
         streetCount:    allStreets.length,
       })
     }
-    // Don't auto-close — let Alicia assign another zone or close manually
   }
 
   // ── Labels ────────────────────────────────────────────────────────────────────
@@ -582,9 +646,20 @@ export default function ManagerMap({
           </Marker>
         ))}
 
-        {/* Terrain barré — black #000000 */}
+        {/* Terrain barré — black (in-bounds) + orange (out-of-bounds) */}
         <Source id="covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
-          <Layer id="covered-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
+          <Layer
+            id="covered-streets-line"
+            type="line"
+            filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
+            paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }}
+          />
+          <Layer
+            id="covered-streets-oob-line"
+            type="line"
+            filter={['==', true, ['get', 'out_of_bounds']]}
+            paint={{ 'line-color': '#f97316', 'line-width': 2.5, 'line-opacity': 0.9 }}
+          />
         </Source>
 
         {/* Terrain du jour — green #22c55e */}
@@ -615,6 +690,64 @@ export default function ManagerMap({
         {barreHover && !editMode && (
           <Marker longitude={barreHover.lng} latitude={barreHover.lat} anchor="bottom">
             <BarrePopup info={barreHover} onClose={() => setBarreHover(null)} />
+          </Marker>
+        )}
+
+        {/* Zone click popup */}
+        {zonePopup && !panelOpen && (
+          <Marker longitude={zonePopup.lng} latitude={zonePopup.lat} anchor="bottom">
+            <div className={cn(
+              'mb-2 rounded-2xl overflow-hidden shadow-2xl border min-w-[200px]',
+              'bg-white dark:bg-[#12163a] border-slate-200/80 dark:border-white/[0.08]',
+            )}>
+              <div className="h-1 bg-[#22c55e]" />
+              <div className="px-4 py-3 space-y-2">
+                <div>
+                  <p className="font-body text-[10px] text-slate-400 dark:text-white/40 uppercase tracking-wide">
+                    {locale !== 'en' ? 'Terrain du jour' : "Today's turf"}
+                  </p>
+                  <p className="font-display text-sm font-bold text-brand-navy dark:text-white">
+                    {zonePopup.supervisorName ?? (locale !== 'en' ? 'Aucun superviseur' : 'No supervisor')}
+                  </p>
+                  <p className="font-body text-xs text-slate-500 dark:text-white/50">{zonePopup.teamName}</p>
+                </div>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => {
+                      const zone = zones.find(z => z.id === zonePopup.zoneId)
+                      if (!zone) return
+                      const fc = zone.streets as GeoJSON.FeatureCollection
+                      setEditingZoneId(zone.id)
+                      setFormTeamId(zone.team_id)
+                      setFormSupervisorId(zone.supervisor_id ?? '')
+                      setFormDate(zone.date)
+                      setDrawnStreets(fc?.features ?? [])
+                      setZonePopup(null)
+                      setPanelOpen(true)
+                      setDrawMode('drawing')
+                      setSaveError('')
+                      setSaveSuccess(false)
+                    }}
+                    className="flex-1 h-8 rounded-xl font-body text-xs font-semibold bg-brand-navy text-white hover:bg-brand-navy-light transition-colors"
+                  >
+                    {locale !== 'en' ? 'Modifier' : 'Edit'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setZoneDeleteConfirm({ zoneId: zonePopup.zoneId, supervisorName: zonePopup.supervisorName, teamName: zonePopup.teamName })
+                      setZonePopup(null)
+                    }}
+                    className="flex-1 h-8 rounded-xl font-body text-xs font-semibold bg-brand-red/10 text-brand-red hover:bg-brand-red/20 transition-colors"
+                  >
+                    {locale !== 'en' ? 'Supprimer' : 'Delete'}
+                  </button>
+                  <button
+                    onClick={() => setZonePopup(null)}
+                    className="w-8 h-8 rounded-xl font-body text-xs text-slate-400 dark:text-white/40 hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors flex items-center justify-center"
+                  >✕</button>
+                </div>
+              </div>
+            </div>
           </Marker>
         )}
       </Map>
@@ -757,11 +890,130 @@ export default function ManagerMap({
                 )}
               </div>
               <button
-                onClick={() => setAssignConfirm(null)}
+                onClick={handleAssignConfirmDismiss}
                 className="mt-1 font-body text-xs text-slate-400 dark:text-white/30 hover:text-slate-600 dark:hover:text-white/60 transition-colors"
               >
                 {locale !== 'en' ? 'Fermer' : 'Close'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Next-action prompt after successful assignment */}
+      {showNextAction && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className={cn(
+            'mx-4 w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl',
+            'bg-white dark:bg-[#12163a]',
+            'border border-slate-200/80 dark:border-white/[0.08]',
+          )}>
+            <div className="h-1.5 bg-brand-navy" />
+            <div className="px-6 py-5">
+              <p className="font-display text-base font-bold text-brand-navy dark:text-white text-center mb-4">
+                {locale !== 'en' ? 'Que voulez-vous faire?' : 'What would you like to do?'}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => { setShowNextAction(false); openPanel() }}
+                  className={cn(
+                    'flex flex-col items-center gap-2 p-4 rounded-2xl',
+                    'border-2 border-brand-navy/20 hover:border-brand-navy',
+                    'bg-slate-50 dark:bg-white/[0.04] hover:bg-brand-navy/5',
+                    'transition-all duration-150 group',
+                  )}
+                >
+                  <div className="w-10 h-10 rounded-full bg-brand-navy/10 flex items-center justify-center group-hover:bg-brand-navy/20 transition-colors">
+                    <svg className="w-5 h-5 text-brand-navy dark:text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4"/>
+                    </svg>
+                  </div>
+                  <span className="font-body text-xs font-semibold text-brand-navy dark:text-white text-center leading-tight">
+                    {locale !== 'en' ? 'Assigner un autre terrain' : 'Assign another turf'}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setShowNextAction(false)}
+                  className={cn(
+                    'flex flex-col items-center gap-2 p-4 rounded-2xl',
+                    'border-2 border-slate-200/80 dark:border-white/[0.12] hover:border-slate-400',
+                    'bg-slate-50 dark:bg-white/[0.04] hover:bg-slate-100 dark:hover:bg-white/[0.08]',
+                    'transition-all duration-150 group',
+                  )}
+                >
+                  <div className="w-10 h-10 rounded-full bg-slate-200/80 dark:bg-white/[0.08] flex items-center justify-center group-hover:bg-slate-300/80 transition-colors">
+                    <svg className="w-5 h-5 text-slate-600 dark:text-white/70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+                    </svg>
+                  </div>
+                  <span className="font-body text-xs font-semibold text-slate-700 dark:text-white/70 text-center leading-tight">
+                    {locale !== 'en' ? 'Retour à la carte' : 'Back to map'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Zone delete confirmation */}
+      {zoneDeleteConfirm && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className={cn(
+            'mx-4 w-full max-w-xs rounded-2xl overflow-hidden shadow-2xl',
+            'bg-white dark:bg-[#12163a]',
+            'border border-slate-200/80 dark:border-white/[0.08]',
+          )}>
+            <div className="h-1 bg-brand-red" />
+            <div className="px-5 py-5 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-brand-red/10 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-brand-red" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-display font-bold text-brand-navy dark:text-white text-sm">
+                    {locale !== 'en' ? 'Supprimer ce terrain?' : 'Delete this turf?'}
+                  </p>
+                  <p className="font-body text-xs text-slate-500 dark:text-white/50 mt-0.5">
+                    {zoneDeleteConfirm.supervisorName ?? '—'} · {zoneDeleteConfirm.teamName}
+                  </p>
+                </div>
+              </div>
+              {deleteZoneError && (
+                <p className="font-body text-xs text-brand-red">{deleteZoneError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setZoneDeleteConfirm(null); setDeleteZoneError('') }}
+                  className="flex-1 h-10 rounded-xl font-body text-sm font-semibold border border-slate-200 dark:border-white/[0.12] text-slate-600 dark:text-white/70 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-colors"
+                >
+                  {locale !== 'en' ? 'Annuler' : 'Cancel'}
+                </button>
+                <button
+                  onClick={async () => {
+                    setDeletingZone(true)
+                    setDeleteZoneError('')
+                    const result = await deleteDailyZone(zoneDeleteConfirm.zoneId)
+                    setDeletingZone(false)
+                    if (result.error) {
+                      setDeleteZoneError(result.error)
+                    } else {
+                      setZoneDeleteConfirm(null)
+                      router.refresh()
+                    }
+                  }}
+                  disabled={deletingZone}
+                  className="flex-1 h-10 rounded-xl font-body text-sm font-semibold bg-brand-red text-white hover:bg-brand-red/90 disabled:opacity-60 transition-colors"
+                >
+                  {deletingZone ? (
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin mx-auto" />
+                  ) : (
+                    locale !== 'en' ? 'Confirmer' : 'Confirm'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -813,6 +1065,10 @@ export default function ManagerMap({
         <div className="flex items-center gap-2">
           <div className="w-6 h-[4px] rounded-full bg-black" />
           <span className="text-slate-600 dark:text-white/60">{t('legend_barre')}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-[4px] rounded-full bg-[#f97316]" />
+          <span className="text-slate-600 dark:text-white/60">{locale !== 'en' ? 'Hors zone' : 'Out-of-bounds'}</span>
         </div>
       </div>
 
@@ -1098,7 +1354,7 @@ export default function ManagerMap({
         {/* Panel header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.07]">
           <h2 className="font-display text-base font-bold text-brand-navy dark:text-white">
-            {t('panel_title')}
+            {editingZoneId ? (locale !== 'en' ? 'Modifier le terrain' : 'Edit turf') : t('panel_title')}
           </h2>
           <button onClick={closePanel} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -1331,7 +1587,7 @@ export default function ManagerMap({
                   disabled={saving || (drawnStreets.length === 0 && currentLine.length < 2 && !aiPreview?.length)}
                   className={cn(btnSave, 'col-span-1')}
                 >
-                  {saving ? '...' : t('finish')}
+                  {saving ? '...' : (editingZoneId ? (locale !== 'en' ? 'Enregistrer' : 'Save') : t('finish'))}
                 </button>
               </div>
             </>

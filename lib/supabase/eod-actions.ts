@@ -290,6 +290,20 @@ export async function fetchTodayEOD(supervisorId: string, date: string): Promise
   return data
 }
 
+// ── Get ALL today's EODs for a supervisor (multiple per day allowed) ──────────
+export async function fetchTodayEODs(supervisorId: string, date: string): Promise<EODEntry[]> {
+  const supabase = createClient()
+
+  const { data } = await supabase
+    .from('daily_entries')
+    .select('*')
+    .eq('supervisor_id', supervisorId)
+    .eq('entry_date', date)
+    .order('created_at', { ascending: true })
+
+  return (data ?? []) as EODEntry[]
+}
+
 // ── Get EOD history for a supervisor ─────────────────────────────────────────
 export async function fetchEODHistory(supervisorId: string): Promise<EODEntry[]> {
   const supabase = createClient()

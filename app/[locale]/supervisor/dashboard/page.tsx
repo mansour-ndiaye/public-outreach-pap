@@ -4,7 +4,7 @@ import {
   fetchSupervisorTerritory,
   fetchTodayZones,
   fetchTeamZonesToday,
-  fetchTodayEOD,
+  fetchTodayEODs,
   fetchEODHistory,
   fetchPastCoveredStreets,
   fetchTeamPastCoveredStreets,
@@ -82,13 +82,13 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
   }
 
   const [
-    territory, todayZones, teamZones, todayEOD,
+    territory, todayZones, teamZones, todayEODs,
     eodHistory, pastStreets, teamPastStreets, supervisorName, allTeams,
   ] = await Promise.all([
     fetchSupervisorTerritory(team.teamId),
     fetchTodayZones(user.id, today),
     fetchTeamZonesToday(team.teamId, today),
-    fetchTodayEOD(user.id, today),
+    fetchTodayEODs(user.id, today),
     fetchEODHistory(user.id),
     fetchPastCoveredStreets(user.id),
     fetchTeamPastCoveredStreets(team.teamId, user.id),
@@ -110,7 +110,7 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
       territory={territory}
       todayZones={todayZones}
       teamZones={teamZones}
-      todayEOD={todayEOD}
+      todayEODs={todayEODs}
       eodHistory={eodHistory}
       pastStreets={pastStreets}
       teamPastStreets={teamPastStreets}

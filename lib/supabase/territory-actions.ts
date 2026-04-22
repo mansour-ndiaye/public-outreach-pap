@@ -47,6 +47,23 @@ export async function createTerritory(data: {
   return { id: row!.id }
 }
 
+export async function updateTerritory(
+  id: string,
+  data: { name?: string; status?: TerritoryStatus; coordinates?: number[][][] },
+): Promise<{ error?: string }> {
+  const supabase = createClient()
+  const { error } = await (supabase as ReturnType<typeof createClient>)
+    .from('territories')
+    .update(data as never)
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/fr/admin/territories')
+  revalidatePath('/en/admin/territories')
+  revalidatePath('/fr/admin/settings')
+  revalidatePath('/en/admin/settings')
+  return {}
+}
+
 export async function deleteTerritory(id: string): Promise<{ error?: string }> {
   const supabase = createClient()
   const { error } = await supabase

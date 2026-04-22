@@ -14,6 +14,7 @@ export type BarrePopupInfo = {
   recalls_count:    number
   note:             string | null
   streets_count:    number
+  out_of_bounds?:   boolean
 }
 
 function formatDateFr(dateStr: string) {
@@ -56,6 +57,11 @@ export function BarrePopup({ info, onClose, locale }: Props) {
             <p className="font-body text-[11px] text-slate-400 dark:text-white/40 leading-tight">
               {info.team_name}
             </p>
+          )}
+          {info.out_of_bounds && (
+            <span className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-body text-[10px] font-bold">
+              ⚠️ Hors terrain
+            </span>
           )}
         </div>
 

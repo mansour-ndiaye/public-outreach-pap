@@ -1,30 +1,46 @@
-import { getTranslations } from 'next-intl/server'
+import { createClient } from '@/lib/supabase/server'
+import { fetchTerritories, fetchTeams } from '@/lib/supabase/territory-actions'
+import { fetchTeamsWithDetails } from '@/lib/supabase/team-actions'
+import AdminSettings from '@/components/admin/settings/AdminSettings'
+import type { UserRow, TerritoryRow } from '@/types'
 
 export const dynamic = 'force-dynamic'
 
-export default async function AdminSettingsPage() {
-  const tNav = await getTranslations('admin.nav')
-  const t = await getTranslations('admin.placeholder')
+interface Props {
+  params: { locale: string }
+}
+
+export default async function AdminSettingsPage({ params: { locale } }: Props) {
+  const supabase = createClient()
+
+  const [territories, teams, teamsWithDetails, usersResult] = await Promise.all([
+    fetchTerritories() as Promise<TerritoryRow[]>,
+    fetchTeams(),
+    fetchTeamsWithDetails(),
+    supabase.from('users').select('*').order('created_at', { ascending: false }),
+  ])
+
+  const users = (usersResult.data ?? []) as UserRow[]
 
   return (
-    <div className="p-6 sm:p-8 max-w-5xl mx-auto">
-      <div className="mb-8">
+    <div className="p-0 sm:p-2">
+      <div className="px-4 sm:px-6 pt-6 pb-4 max-w-4xl mx-auto">
         <h1 className="font-display text-2xl font-bold tracking-tight text-brand-navy dark:text-white">
-          {tNav('settings')}
+          {locale !== 'en' ? 'Paramètres' : 'Settings'}
         </h1>
-      </div>
-      <div className="flex flex-col items-center justify-center rounded-2xl py-20
-        bg-white dark:bg-white/[0.03]
-        border border-slate-100 dark:border-white/[0.06]
-        text-center space-y-3">
-        <div className="text-3xl mb-2">⚙️</div>
-        <h2 className="font-display font-semibold text-base text-brand-navy dark:text-white">
-          {t('coming_soon')}
-        </h2>
-        <p className="font-body text-sm text-slate-500 dark:text-white/40 max-w-xs leading-relaxed">
-          {t('coming_soon_desc')}
+        <p className="font-body text-sm text-slate-500 dark:text-white/45 mt-1">
+          {locale !== 'en'
+            ? 'Gérez les zones, équipes, utilisateurs et préférences.'
+            : 'Manage zones, teams, users and preferences.'}
         </p>
       </div>
+      <AdminSettings
+        territories={territories}
+        teams={teams}
+        teamsWithDetails={teamsWithDetails}
+        users={users}
+        locale={locale}
+      />
     </div>
   )
 }
