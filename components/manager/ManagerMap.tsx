@@ -8,12 +8,14 @@ import Map, {
 import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
-import { createDailyZone, fetchSupervisorsForTeam, updateDailyZone, deleteDailyZone } from '@/lib/supabase/zone-actions'
+import { createDailyZone, fetchSupervisorsForTeam, updateDailyZone, deleteDailyZone, swapDailyZoneSupervisor, fetchAllSupervisors } from '@/lib/supabase/zone-actions'
 import { deleteStreetFeature } from '@/lib/supabase/eod-actions'
+import type { RecallEntry } from '@/lib/supabase/eod-actions'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import { BarrePopup } from '@/components/ui/BarrePopup'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam, SupervisorOption } from '@/lib/supabase/zone-actions'
+import type { VisitEntry } from '@/components/ui/BarrePopup'
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!
 const MONTREAL: [number, number] = [-73.5673, 45.5017]
@@ -148,7 +150,7 @@ export default function ManagerMap({
 
   // Assignment confirmation popup
   const [assignConfirm, setAssignConfirm] = useState<{
-    supervisorName: string; teamName: string; date: string; streetCount: number
+    supervisorNames: string[]; teamName: string; date: string; streetCount: number
   } | null>(null)
 
   // Next-action overlay (shown after assignConfirm dismisses)
@@ -168,13 +170,59 @@ export default function ManagerMap({
   const [deletingZone, setDeletingZone] = useState(false)
   const [deleteZoneError, setDeleteZoneError] = useState('')
 
+  // Period filter for terrain barré
+  type PeriodFilter = 'quarter' | 'prev_quarter' | 'rolling_3mo' | 'all'
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('quarter')
+
+  // Swap supervisor modal
+  const [swapModal, setSwapModal] = useState<{
+    zoneId: string; currentSupervisorId: string | null; currentSupervisorName: string | null; zoneDate: string
+  } | null>(null)
+  const [allSupervisors, setAllSupervisors] = useState<SupervisorOption[]>([])
+  const [swapNewSupId, setSwapNewSupId] = useState('')
+  const [swapping, setSwapping] = useState(false)
+  const [swapError, setSwapError] = useState('')
+  const [swapSuccess, setSwapSuccess] = useState(false)
+
+  // Recall pins
+  type RecallMapPin = { lng: number; lat: number; street: string; postal_code: string; numbers: string[]; supervisor_name: string; date: string }
+  const [showRecallPins, setShowRecallPins] = useState(true)
+
+  const recallPins = useMemo((): RecallMapPin[] => {
+    if (!allCoveredStreets?.features) return []
+    const pins: RecallMapPin[] = []
+    for (const feature of allCoveredStreets.features) {
+      if (feature.geometry.type !== 'LineString') continue
+      const p = feature.properties ?? {}
+      const recallsJson = p.recalls as string | undefined
+      if (!recallsJson) continue
+      let recalls: RecallEntry[]
+      try { recalls = JSON.parse(recallsJson) } catch { continue }
+      if (!recalls.length) continue
+      const coords = (feature.geometry as GeoJSON.LineString).coordinates
+      const mid = Math.floor(coords.length / 2)
+      const [lng, lat] = coords[mid]
+      for (const r of recalls) {
+        pins.push({
+          lng, lat,
+          street:          r.street,
+          postal_code:     r.postal_code,
+          numbers:         r.numbers,
+          supervisor_name: (p.supervisor_name as string) ?? '',
+          date:            (p.entry_date as string) ?? '',
+        })
+      }
+    }
+    return pins
+  }, [allCoveredStreets])
+
   // Assignment form
-  const [formTeamId,       setFormTeamId]       = useState('')
-  const [formSupervisorId, setFormSupervisorId] = useState('')
-  const [formDate,         setFormDate]         = useState(todayDate)
-  const [formNote,         setFormNote]         = useState('')
-  const [supervisors,      setSupervisors]      = useState<SupervisorOption[]>([])
-  const [loadingSups,      setLoadingSups]      = useState(false)
+  const [formTeamId,        setFormTeamId]        = useState('')
+  const [formSupervisorIds, setFormSupervisorIds] = useState<string[]>([])
+  const [formDate,          setFormDate]          = useState(todayDate)
+  const [formNote,          setFormNote]          = useState('')
+  const [supervisors,       setSupervisors]       = useState<SupervisorOption[]>([])
+  const [loadingSups,       setLoadingSups]       = useState(false)
 
   // Manual drawing state
   const [currentLine,  setCurrentLine]  = useState<[number, number][]>([])
@@ -191,7 +239,9 @@ export default function ManagerMap({
   const [barreHover, setBarreHover] = useState<{
     supervisor_name: string; team_name: string | null; date: string
     pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
-    pfu: number; recalls_count: number; note: string | null; streets_count: number
+    pfu: number; recalls_count: number; recalls?: RecallEntry[]; note: string | null; streets_count: number
+    postal_code?: string
+    visits?: VisitEntry[]
     lng: number; lat: number
     entry_id?: string; feature_index?: number
   } | null>(null)
@@ -226,9 +276,9 @@ export default function ManagerMap({
 
   // Load supervisors when team selection changes
   useEffect(() => {
-    if (!formTeamId) { setSupervisors([]); setFormSupervisorId(''); return }
+    if (!formTeamId) { setSupervisors([]); setFormSupervisorIds([]); return }
     setLoadingSups(true)
-    setFormSupervisorId('')
+    setFormSupervisorIds([])
     fetchSupervisorsForTeam(formTeamId).then(sups => {
       setSupervisors(sups)
       setLoadingSups(false)
@@ -243,11 +293,51 @@ export default function ManagerMap({
     [zones, teamColorMap, todayDate],
   )
 
-  // Covered streets (terrain barré) — always black
-  const coveredStreetsGeoJSON = useMemo(
-    (): GeoJSON.FeatureCollection => allCoveredStreets ?? { type: 'FeatureCollection', features: [] },
-    [allCoveredStreets],
-  )
+  // Period filter helper
+  const periodStartDate = useMemo((): string | null => {
+    const now = new Date()
+    if (periodFilter === 'all') return null
+    if (periodFilter === 'rolling_3mo') {
+      const d = new Date(now)
+      d.setMonth(d.getMonth() - 3)
+      return d.toISOString().split('T')[0]
+    }
+    const month = now.getMonth() // 0-based
+    const year  = now.getFullYear()
+    if (periodFilter === 'quarter') {
+      const qStart = Math.floor(month / 3) * 3
+      return `${year}-${String(qStart + 1).padStart(2, '0')}-01`
+    }
+    // prev_quarter
+    const qStart = Math.floor(month / 3) * 3 - 3
+    if (qStart < 0) return `${year - 1}-10-01`
+    return `${year}-${String(qStart + 1).padStart(2, '0')}-01`
+  }, [periodFilter])
+
+  const periodEndDate = useMemo((): string | null => {
+    if (periodFilter !== 'prev_quarter') return null
+    const now = new Date()
+    const month = now.getMonth()
+    const year  = now.getFullYear()
+    const qStart = Math.floor(month / 3) * 3 - 3
+    const qEnd   = qStart + 3
+    if (qEnd <= 0) return `${year - 1}-12-31`
+    return `${year}-${String(qEnd).padStart(2, '0')}-${new Date(year, qEnd, 0).getDate()}`
+  }, [periodFilter])
+
+  // Covered streets filtered by selected period
+  const coveredStreetsGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
+    const base = allCoveredStreets ?? { type: 'FeatureCollection', features: [] }
+    if (periodFilter === 'all') return base
+    const features = base.features.filter(f => {
+      const d = f.properties?.entry_date as string | null
+      if (!d) return true
+      if (periodStartDate && d < periodStartDate) return false
+      if (periodEndDate   && d > periodEndDate)   return false
+      return true
+    })
+    return { type: 'FeatureCollection', features }
+  }, [allCoveredStreets, periodFilter, periodStartDate, periodEndDate])
 
   const drawingGeoJSON = useMemo(
     () => buildDrawingGeoJSON(currentLine, drawnStreets, aiPreview, getColor(teamColorMap, formTeamId)),
@@ -300,9 +390,32 @@ export default function ManagerMap({
 
   const handleMouseMove = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') { setBarreHover(null); return }
-    const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line'] })
+    const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line', 'covered-streets-oob-line'] })
     if (features?.length) {
       const p = features[0].properties ?? {}
+      let recalls: RecallEntry[] | undefined
+      try { recalls = JSON.parse(p.recalls as string) } catch { recalls = undefined }
+      const postalCode = (p.postal_code as string | null) ?? undefined
+      // Build multi-visit list from all features at this point sharing the same street_key
+      const streetKey = (p.street_key as string | null) ?? null
+      let visits: VisitEntry[] | undefined
+      if (streetKey) {
+        const allAtPoint = features.filter(f => (f.properties?.street_key as string | null) === streetKey)
+        if (allAtPoint.length > 1) {
+          // dedupe by entry_id
+          const seen = new Set<string>()
+          visits = allAtPoint
+            .map(f => ({
+              date:            (f.properties?.entry_date as string) ?? '',
+              supervisor_name: (f.properties?.supervisor_name as string) ?? '—',
+              team_name:       (f.properties?.team_name as string | null) ?? null,
+              pph:             Number(f.properties?.pph ?? 0),
+              entry_id:        (f.properties?.entry_id as string) ?? '',
+            }))
+            .filter(v => { if (seen.has(v.entry_id)) return false; seen.add(v.entry_id); return true })
+            .sort((a, b) => b.date.localeCompare(a.date))
+        }
+      }
       setBarreHover({
         supervisor_name:  (p.supervisor_name as string | null) ?? '—',
         team_name:        (p.team_name as string | null) ?? null,
@@ -313,8 +426,11 @@ export default function ManagerMap({
         pac_total_amount: Number(p.pac_total_amount ?? 0),
         pfu:              Number(p.pfu ?? 0),
         recalls_count:    Number(p.recalls_count ?? 0),
+        recalls,
+        postal_code:      postalCode,
         note:             (p.note as string | null) ?? null,
         streets_count:    Number(p.streets_count ?? 0),
+        visits,
         lng:              e.lngLat.lng,
         lat:              e.lngLat.lat,
         entry_id:         (p.entry_id as string | null) ?? undefined,
@@ -347,7 +463,7 @@ export default function ManagerMap({
     setCurrentLine([])
     setDrawnStreets([])
     setFormTeamId('')
-    setFormSupervisorId('')
+    setFormSupervisorIds([])
     setSupervisors([])
     setFormNote('')
     setFormDate(todayDate)
@@ -373,7 +489,7 @@ export default function ManagerMap({
     setSaveError('')
     setAssignConfirm(null)
     setEditingZoneId(null)
-    // keep formTeamId, formSupervisorId, formDate, formNote
+    // keep formTeamId, formSupervisorIds, formDate, formNote
   }
 
   // Dismiss the assign confirmation and show next-action prompt
@@ -390,11 +506,12 @@ export default function ManagerMap({
     setAiPreview(null)
     setAiError('')
     setEditingZoneId(null)
+    setFormSupervisorIds([])
   }, [])
 
   const startDrawing = () => {
     if (!formTeamId) { setSaveError(locale !== 'en' ? 'Sélectionnez une équipe' : 'Select a team'); return }
-    if (!formSupervisorId) { setSaveError(locale !== 'en' ? 'Sélectionnez un superviseur' : 'Select a supervisor'); return }
+    if (formSupervisorIds.length === 0 && !editingZoneId) { setSaveError(locale !== 'en' ? 'Sélectionnez au moins un superviseur' : 'Select at least one supervisor'); return }
     setSaveError('')
     setCurrentLine([])
     setDrawnStreets([])
@@ -402,12 +519,24 @@ export default function ManagerMap({
     setDrawMode('drawing')
   }
 
-  const finishStreet = () => {
+  const finishStreet = async () => {
     if (currentLine.length < 2) return
+
+    // Reverse geocode midpoint for postal code
+    let postalCode: string | undefined
+    try {
+      const mid = Math.floor(currentLine.length / 2)
+      const [lng, lat] = currentLine[mid]
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=postcode&limit=1`
+      const res = await fetch(url)
+      const json = await res.json()
+      postalCode = json.features?.[0]?.text as string | undefined
+    } catch { /* non-critical */ }
+
     setDrawnStreets(prev => [...prev, {
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: currentLine },
-      properties: { color: getColor(teamColorMap, formTeamId) },
+      properties: { color: getColor(teamColorMap, formTeamId), postal_code: postalCode ?? null },
     }])
     setCurrentLine([])
   }
@@ -552,39 +681,46 @@ export default function ManagerMap({
     setSaveError('')
     const fc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: allStreets }
 
-    let result: { id?: string; error?: string }
     if (editingZoneId) {
-      result = await updateDailyZone(editingZoneId, fc)
-    } else {
-      result = await createDailyZone({
-        team_id:       formTeamId,
-        supervisor_id: formSupervisorId || null,
-        date:          formDate,
-        streets:       fc,
-        note:          formNote,
-      })
-    }
-    setSaving(false)
-
-    if (result.error) {
-      setSaveError(result.error)
-    } else if (editingZoneId) {
+      const result = await updateDailyZone(editingZoneId, fc)
+      setSaving(false)
+      if (result.error) { setSaveError(result.error); return }
       setEditingZoneId(null)
       closePanel()
       router.refresh()
-    } else {
-      setSaveSuccess(true)
-      const supName = supervisors.find(s => s.id === formSupervisorId)?.full_name
-        ?? supervisors.find(s => s.id === formSupervisorId)?.email
-        ?? '—'
-      const tmName = teams.find(tm => tm.id === formTeamId)?.name ?? '—'
-      setAssignConfirm({
-        supervisorName: supName,
-        teamName:       tmName,
-        date:           formDate,
-        streetCount:    allStreets.length,
-      })
+      return
     }
+
+    // Create one zone per selected supervisor (multi-supervisor support)
+    const supIds = formSupervisorIds.length > 0 ? formSupervisorIds : [null]
+    const results = await Promise.all(
+      supIds.map(supId => createDailyZone({
+        team_id:       formTeamId,
+        supervisor_id: supId,
+        date:          formDate,
+        streets:       fc,
+        note:          formNote,
+      }))
+    )
+    setSaving(false)
+
+    const firstError = results.find(r => r.error)
+    if (firstError?.error) { setSaveError(firstError.error); return }
+
+    setSaveSuccess(true)
+    const supNames = supIds.map(id => {
+      if (!id) return '—'
+      return supervisors.find(s => s.id === id)?.full_name
+        ?? supervisors.find(s => s.id === id)?.email
+        ?? '—'
+    })
+    const tmName = teams.find(tm => tm.id === formTeamId)?.name ?? '—'
+    setAssignConfirm({
+      supervisorNames: supNames,
+      teamName:        tmName,
+      date:            formDate,
+      streetCount:     allStreets.length,
+    })
   }
 
   // ── Labels ────────────────────────────────────────────────────────────────────
@@ -646,19 +782,39 @@ export default function ManagerMap({
           </Marker>
         ))}
 
-        {/* Terrain barré — black (in-bounds) + orange (out-of-bounds) */}
+        {/* Terrain barré — opacity encodes recency: rank 0=100%, rank 1=60%, rank 2+=35% */}
         <Source id="covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
           <Layer
             id="covered-streets-line"
             type="line"
             filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
-            paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }}
+            paint={{
+              'line-color': ['case',
+                ['==', ['get', 'recency_rank'], 0], '#000000',
+                ['==', ['get', 'recency_rank'], 1], '#333333',
+                '#666666',
+              ],
+              'line-width': 2,
+              'line-opacity': ['case',
+                ['==', ['get', 'recency_rank'], 0], 1.0,
+                ['==', ['get', 'recency_rank'], 1], 0.60,
+                0.35,
+              ],
+            }}
           />
           <Layer
             id="covered-streets-oob-line"
             type="line"
             filter={['==', true, ['get', 'out_of_bounds']]}
-            paint={{ 'line-color': '#f97316', 'line-width': 2.5, 'line-opacity': 0.9 }}
+            paint={{
+              'line-color': '#f97316',
+              'line-width': 2.5,
+              'line-opacity': ['case',
+                ['==', ['get', 'recency_rank'], 0], 0.9,
+                ['==', ['get', 'recency_rank'], 1], 0.60,
+                0.35,
+              ],
+            }}
           />
         </Source>
 
@@ -685,6 +841,18 @@ export default function ManagerMap({
             }} />
           </Source>
         )}
+
+        {/* Recall pins */}
+        {showRecallPins && recallPins.map((pin, i) => (
+          <Marker key={`recall-${i}`} longitude={pin.lng} latitude={pin.lat} anchor="center">
+            <div
+              title={`${pin.street}${pin.numbers.length ? ': ' + pin.numbers.join(', ') : ''} — ${pin.supervisor_name}`}
+              className="w-5 h-5 rounded-full bg-brand-red border-2 border-white shadow-md flex items-center justify-center pointer-events-auto cursor-default"
+            >
+              <span className="text-white font-bold text-[9px] leading-none">!</span>
+            </div>
+          </Marker>
+        ))}
 
         {/* Terrain barré popup — hide in edit mode */}
         {barreHover && !editMode && (
@@ -719,7 +887,7 @@ export default function ManagerMap({
                       const fc = zone.streets as GeoJSON.FeatureCollection
                       setEditingZoneId(zone.id)
                       setFormTeamId(zone.team_id)
-                      setFormSupervisorId(zone.supervisor_id ?? '')
+                      setFormSupervisorIds(zone.supervisor_id ? [zone.supervisor_id] : [])
                       setFormDate(zone.date)
                       setDrawnStreets(fc?.features ?? [])
                       setZonePopup(null)
@@ -731,6 +899,25 @@ export default function ManagerMap({
                     className="flex-1 h-8 rounded-xl font-body text-xs font-semibold bg-brand-navy text-white hover:bg-brand-navy-light transition-colors"
                   >
                     {locale !== 'en' ? 'Modifier' : 'Edit'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSwapModal({
+                        zoneId: zonePopup.zoneId,
+                        currentSupervisorId:   zonePopup.supervisorId,
+                        currentSupervisorName: zonePopup.supervisorName,
+                        zoneDate: zonePopup.date,
+                      })
+                      setSwapNewSupId(zonePopup.supervisorId ?? '')
+                      setSwapError('')
+                      setSwapSuccess(false)
+                      setZonePopup(null)
+                      // Load all supervisors lazily
+                      fetchAllSupervisors().then(sups => setAllSupervisors(sups))
+                    }}
+                    className="flex-1 h-8 rounded-xl font-body text-xs font-semibold bg-brand-teal/10 text-brand-teal hover:bg-brand-teal/20 transition-colors"
+                  >
+                    {locale !== 'en' ? 'Changer' : 'Swap'}
                   </button>
                   <button
                     onClick={() => {
@@ -877,7 +1064,7 @@ export default function ManagerMap({
                   {locale !== 'en' ? 'Terrain assigné!' : 'Turf assigned!'}
                 </p>
                 <p className="font-body text-sm text-slate-600 dark:text-white/70 mt-1">
-                  {assignConfirm.supervisorName}
+                  {assignConfirm.supervisorNames.join(', ')}
                   {assignConfirm.teamName !== '—' && ` · ${assignConfirm.teamName}`}
                   {assignConfirm.date && ` · ${new Date(assignConfirm.date + 'T00:00:00').toLocaleDateString(locale !== 'en' ? 'fr-CA' : 'en-CA', { day: 'numeric', month: 'long', year: 'numeric' })}`}
                 </p>
@@ -949,6 +1136,88 @@ export default function ManagerMap({
                   <span className="font-body text-xs font-semibold text-slate-700 dark:text-white/70 text-center leading-tight">
                     {locale !== 'en' ? 'Retour à la carte' : 'Back to map'}
                   </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Swap supervisor modal */}
+      {swapModal && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className={cn(
+            'mx-4 w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl',
+            'bg-white dark:bg-[#12163a]',
+            'border border-slate-200/80 dark:border-white/[0.08]',
+          )}>
+            <div className="h-1 bg-brand-teal" />
+            <div className="px-5 py-5 space-y-4">
+              <div>
+                <p className="font-display font-bold text-brand-navy dark:text-white text-sm">
+                  {locale !== 'en' ? 'Changer le superviseur' : 'Change supervisor'}
+                </p>
+                {swapModal.currentSupervisorName && (
+                  <p className="font-body text-xs text-slate-500 dark:text-white/50 mt-0.5">
+                    {locale !== 'en' ? 'Actuel' : 'Current'}: {swapModal.currentSupervisorName}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {locale !== 'en' ? 'Nouveau superviseur' : 'New supervisor'}
+                </label>
+                <select
+                  value={swapNewSupId}
+                  onChange={e => setSwapNewSupId(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="">{locale !== 'en' ? 'Sélectionnez…' : 'Select…'}</option>
+                  {allSupervisors.map(s => (
+                    <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
+                  ))}
+                </select>
+              </div>
+              {swapError && <p className="font-body text-xs text-brand-red">{swapError}</p>}
+              {swapSuccess && (
+                <p className="font-body text-xs text-brand-teal font-semibold">
+                  {locale !== 'en' ? 'Superviseur mis à jour!' : 'Supervisor updated!'}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setSwapModal(null); setSwapError(''); setSwapSuccess(false) }}
+                  className="flex-1 h-10 rounded-xl font-body text-sm font-semibold border border-slate-200 dark:border-white/[0.12] text-slate-600 dark:text-white/70 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-colors"
+                >
+                  {locale !== 'en' ? 'Annuler' : 'Cancel'}
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!swapNewSupId) return
+                    setSwapping(true)
+                    setSwapError('')
+                    const result = await swapDailyZoneSupervisor(
+                      swapModal.zoneId,
+                      swapNewSupId,
+                      swapModal.currentSupervisorId,
+                      swapModal.zoneDate,
+                    )
+                    setSwapping(false)
+                    if (result.error) {
+                      setSwapError(result.error)
+                    } else {
+                      setSwapSuccess(true)
+                      setTimeout(() => { setSwapModal(null); setSwapSuccess(false); router.refresh() }, 1200)
+                    }
+                  }}
+                  disabled={swapping || !swapNewSupId}
+                  className="flex-1 h-10 rounded-xl font-body text-sm font-semibold bg-brand-teal text-white hover:bg-brand-teal/90 disabled:opacity-60 transition-colors"
+                >
+                  {swapping ? (
+                    <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin mx-auto" />
+                  ) : (
+                    locale !== 'en' ? 'Confirmer' : 'Confirm'
+                  )}
                 </button>
               </div>
             </div>
@@ -1070,6 +1339,52 @@ export default function ManagerMap({
           <div className="w-6 h-[4px] rounded-full bg-[#f97316]" />
           <span className="text-slate-600 dark:text-white/60">{locale !== 'en' ? 'Hors zone' : 'Out-of-bounds'}</span>
         </div>
+        {/* Recency opacity guide */}
+        <div className="pt-1 border-t border-slate-200/60 dark:border-white/[0.06] space-y-1">
+          <p className="text-[10px] text-slate-400 dark:text-white/30 uppercase tracking-wide">
+            {locale !== 'en' ? 'Intensité = récence' : 'Darkness = recency'}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-[3px] rounded-full bg-black opacity-100" />
+            <span className="text-slate-500 dark:text-white/50">{locale !== 'en' ? 'Récent' : 'Recent'}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-[3px] rounded-full bg-[#333333] opacity-60" />
+            <span className="text-slate-400 dark:text-white/40">{locale !== 'en' ? '2e visite' : '2nd visit'}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-[3px] rounded-full bg-[#666666] opacity-35" />
+            <span className="text-slate-400 dark:text-white/30">{locale !== 'en' ? 'Ancien' : 'Older'}</span>
+          </div>
+        </div>
+        {/* Recall pins toggle */}
+        <button
+          onClick={() => setShowRecallPins(prev => !prev)}
+          className="flex items-center gap-2 w-full text-left"
+        >
+          <div className={cn('w-5 h-5 rounded-full border-2 border-white shadow-sm flex items-center justify-center shrink-0', showRecallPins ? 'bg-brand-red' : 'bg-slate-300 dark:bg-white/20')}>
+            <span className="text-white font-bold text-[8px] leading-none">!</span>
+          </div>
+          <span className={cn('transition-colors', showRecallPins ? 'text-brand-red font-semibold' : 'text-slate-400 dark:text-white/30')}>
+            {locale !== 'en' ? 'Rappels' : 'Recalls'}
+          </span>
+        </button>
+        {/* Period filter for terrain barré */}
+        <div className="pt-1 border-t border-slate-200/60 dark:border-white/[0.06]">
+          <p className="text-[10px] text-slate-400 dark:text-white/30 uppercase tracking-wide mb-1">
+            {locale !== 'en' ? 'Période (terrain barré)' : 'Period (covered streets)'}
+          </p>
+          <select
+            value={periodFilter}
+            onChange={e => setPeriodFilter(e.target.value as 'quarter' | 'prev_quarter' | 'rolling_3mo' | 'all')}
+            className="w-full text-[11px] rounded-lg px-2 py-1.5 bg-slate-100 dark:bg-white/[0.08] border border-slate-200 dark:border-white/10 text-slate-700 dark:text-white/70 focus:outline-none"
+          >
+            <option value="quarter">{locale !== 'en' ? 'Ce trimestre' : 'This quarter'}</option>
+            <option value="prev_quarter">{locale !== 'en' ? 'Trimestre précédent' : 'Prev quarter'}</option>
+            <option value="rolling_3mo">{locale !== 'en' ? '3 derniers mois' : 'Rolling 3 months'}</option>
+            <option value="all">{locale !== 'en' ? 'Tout' : 'All time'}</option>
+          </select>
+        </div>
       </div>
 
       {/* Mobile map lock/unlock — positioned below the Assign Zone button */}
@@ -1188,7 +1503,11 @@ export default function ManagerMap({
                   {teams.find(tm => tm.id === formTeamId)?.name ?? '—'}
                 </p>
                 <p className="font-body text-sm font-semibold text-brand-navy dark:text-white truncate">
-                  {supervisors.find(s => s.id === formSupervisorId)?.full_name ?? supervisors.find(s => s.id === formSupervisorId)?.email ?? '—'}
+                  {formSupervisorIds.length === 0
+                    ? '—'
+                    : formSupervisorIds.length === 1
+                      ? (supervisors.find(s => s.id === formSupervisorIds[0])?.full_name ?? supervisors.find(s => s.id === formSupervisorIds[0])?.email ?? '—')
+                      : `${formSupervisorIds.length} superviseur${formSupervisorIds.length > 1 ? 's' : ''}`}
                 </p>
               </div>
             </div>
@@ -1274,22 +1593,40 @@ export default function ManagerMap({
                 ))}
               </select>
             </div>
-            {/* Supervisor */}
+            {/* Supervisor — multi-select checkboxes */}
             <div>
               <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-                {locale !== 'en' ? 'Superviseur' : 'Supervisor'} <span className="text-brand-red">*</span>
+                {locale !== 'en' ? 'Superviseur(s)' : 'Supervisor(s)'} <span className="text-brand-red">*</span>
               </label>
-              <select
-                value={formSupervisorId}
-                onChange={e => setFormSupervisorId(e.target.value)}
-                disabled={!formTeamId || loadingSups}
-                className={inputCls}
-              >
-                <option value="">{loadingSups ? '...' : (locale !== 'en' ? 'Sélectionnez un superviseur' : 'Select a supervisor')}</option>
-                {supervisors.map(s => (
-                  <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
-                ))}
-              </select>
+              {loadingSups ? (
+                <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">...</p>
+              ) : !formTeamId ? (
+                <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">
+                  {locale !== 'en' ? 'Sélectionnez une équipe d\'abord' : 'Select a team first'}
+                </p>
+              ) : supervisors.length === 0 ? (
+                <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">
+                  {locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {supervisors.map(s => (
+                    <label key={s.id} className="flex items-center gap-2.5 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={formSupervisorIds.includes(s.id)}
+                        onChange={e => setFormSupervisorIds(prev =>
+                          e.target.checked ? [...prev, s.id] : prev.filter(id => id !== s.id)
+                        )}
+                        className="w-4 h-4 rounded accent-brand-teal"
+                      />
+                      <span className="font-body text-sm text-slate-700 dark:text-white/80 group-hover:text-brand-navy dark:group-hover:text-white transition-colors">
+                        {s.full_name || s.email}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Date */}
             <div>
@@ -1409,24 +1746,41 @@ export default function ManagerMap({
             )}
           </div>
 
-          {/* Supervisor selector */}
+          {/* Supervisor — multi-select checkboxes */}
           <div>
             <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-              {locale !== 'en' ? 'Superviseur' : 'Supervisor'} <span className="text-brand-red">*</span>
+              {locale !== 'en' ? 'Superviseur(s)' : 'Supervisor(s)'} <span className="text-brand-red">*</span>
             </label>
-            <select
-              value={formSupervisorId}
-              onChange={e => setFormSupervisorId(e.target.value)}
-              disabled={drawMode === 'drawing' || !formTeamId || loadingSups}
-              className={inputCls}
-            >
-              <option value="">
-                {loadingSups ? '...' : (locale !== 'en' ? 'Sélectionnez un superviseur' : 'Select a supervisor')}
-              </option>
-              {supervisors.map(s => (
-                <option key={s.id} value={s.id}>{s.full_name || s.email}</option>
-              ))}
-            </select>
+            {loadingSups ? (
+              <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">...</p>
+            ) : !formTeamId ? (
+              <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
+                {locale !== 'en' ? 'Sélectionnez une équipe d\'abord' : 'Select a team first'}
+              </p>
+            ) : supervisors.length === 0 ? (
+              <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
+                {locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}
+              </p>
+            ) : (
+              <div className={cn('space-y-1.5 rounded-xl p-3', 'bg-slate-50 border border-slate-200 dark:bg-white/[0.04] dark:border-white/10')}>
+                {supervisors.map(s => (
+                  <label key={s.id} className={cn('flex items-center gap-2.5 cursor-pointer group', drawMode === 'drawing' && 'pointer-events-none opacity-60')}>
+                    <input
+                      type="checkbox"
+                      checked={formSupervisorIds.includes(s.id)}
+                      onChange={e => setFormSupervisorIds(prev =>
+                        e.target.checked ? [...prev, s.id] : prev.filter(id => id !== s.id)
+                      )}
+                      disabled={drawMode === 'drawing'}
+                      className="w-4 h-4 rounded accent-brand-teal"
+                    />
+                    <span className="font-body text-sm text-slate-700 dark:text-white/80 group-hover:text-brand-navy dark:group-hover:text-white transition-colors">
+                      {s.full_name || s.email}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Date */}

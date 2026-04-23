@@ -161,12 +161,17 @@ export async function fetchTeamZonesToday(teamId: string, date: string): Promise
   }))
 }
 
-// ── Get other supervisors' covered streets for the team (last 14 days) ────────
+// ── Get other supervisors' covered streets for the team (last 3 months) ────────
 export async function fetchTeamPastCoveredStreets(
   teamId: string,
   excludeSupervisorId: string,
 ): Promise<GeoJSON.FeatureCollection> {
   const supabase = createClient()
+
+  // 3-month rolling window
+  const threeMonthsAgo = new Date()
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+  const startDate = threeMonthsAgo.toISOString().split('T')[0]
 
   // Get all member ids in the team
   const { data: members } = await supabase
@@ -182,11 +187,12 @@ export async function fetchTeamPastCoveredStreets(
 
   const { data: entries } = await supabase
     .from('daily_entries')
-    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
+    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, recalls, note')
     .in('supervisor_id', memberIds)
     .not('covered_streets', 'is', null)
+    .gte('entry_date', startDate)
     .order('entry_date', { ascending: false })
-    .limit(30 * memberIds.length)
+    .limit(200)
 
   return enrichCoveredStreets(supabase, (entries ?? []) as CoveredStreetEntry[])
 }
@@ -203,7 +209,18 @@ type CoveredStreetEntry = {
   pac_total_amount: number
   pfu:             number
   recalls_count:   number
+  recalls:         RecallEntry[] | null
   note:            string | null
+}
+
+// Centroid-based geometry key (3dp ≈ 111m grid) for grouping same-street visits
+function geomKey(feature: GeoJSON.Feature): string {
+  if (feature.geometry.type !== 'LineString') return 'non-line'
+  const coords = (feature.geometry as GeoJSON.LineString).coordinates
+  if (coords.length === 0) return 'empty'
+  let lngSum = 0, latSum = 0
+  for (const c of coords) { lngSum += c[0]; latSum += c[1] }
+  return `${(lngSum / coords.length).toFixed(3)},${(latSum / coords.length).toFixed(3)}`
 }
 
 async function enrichCoveredStreets(
@@ -245,6 +262,7 @@ async function enrichCoveredStreets(
         pac_total_amount: row.pac_total_amount,
         pfu:              row.pfu,
         recalls_count:    row.recalls_count,
+        recalls:          JSON.stringify(row.recalls ?? []),
         note:             row.note,
         streets_count:    row.covered_streets.features.length,
         entry_id:         row.id,
@@ -259,6 +277,29 @@ async function enrichCoveredStreets(
     }
   }
 
+  // Assign recency_rank per street group (centroid key) — 0=most recent, 1=2nd, 2+=older
+  const byKey = new Map<string, GeoJSON.Feature[]>()
+  for (const f of allFeatures) {
+    const key = geomKey(f)
+    const arr = byKey.get(key) ?? []
+    arr.push(f)
+    byKey.set(key, arr)
+  }
+  for (const [key, features] of Array.from(byKey.entries())) {
+    features.sort((a, b) => {
+      const da = (a.properties?.entry_date as string) ?? ''
+      const db = (b.properties?.entry_date as string) ?? ''
+      return db.localeCompare(da) // descending (most recent first)
+    })
+    const total = features.length
+    for (let rank = 0; rank < features.length; rank++) {
+      const p = features[rank].properties!
+      p.street_key   = key
+      p.recency_rank = Math.min(rank, 2) // cap at 2 (third-or-older bucket)
+      p.total_visits = total
+    }
+  }
+
   return { type: 'FeatureCollection', features: allFeatures }
 }
 
@@ -268,10 +309,10 @@ export async function fetchAllCoveredStreets(): Promise<GeoJSON.FeatureCollectio
 
   const { data: entries } = await supabase
     .from('daily_entries')
-    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
+    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, recalls, note')
     .not('covered_streets', 'is', null)
     .order('entry_date', { ascending: false })
-    .limit(300)
+    .limit(1000)
 
   return enrichCoveredStreets(supabase, (entries ?? []) as CoveredStreetEntry[])
 }
@@ -319,17 +360,23 @@ export async function fetchEODHistory(supervisorId: string): Promise<EODEntry[]>
   return (data ?? []) as EODEntry[]
 }
 
-// ── Get all past covered streets for a supervisor (for map display) ───────────
+// ── Get all past covered streets for a supervisor (last 3 months) ────────────
 export async function fetchPastCoveredStreets(supervisorId: string): Promise<GeoJSON.FeatureCollection> {
   const supabase = createClient()
 
+  // 3-month rolling window
+  const threeMonthsAgo = new Date()
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
+  const startDate = threeMonthsAgo.toISOString().split('T')[0]
+
   const { data } = await supabase
     .from('daily_entries')
-    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, note')
+    .select('id, covered_streets, supervisor_id, team_id, entry_date, pph, canvas_hours, pac_count, pac_total_amount, pfu, recalls_count, recalls, note')
     .eq('supervisor_id', supervisorId)
     .not('covered_streets', 'is', null)
+    .gte('entry_date', startDate)
     .order('entry_date', { ascending: false })
-    .limit(30)
+    .limit(100)
 
   return enrichCoveredStreets(supabase, (data ?? []) as CoveredStreetEntry[])
 }

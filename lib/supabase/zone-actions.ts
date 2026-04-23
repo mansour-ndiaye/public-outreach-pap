@@ -304,3 +304,86 @@ export async function deleteDailyZone(zoneId: string): Promise<{ error?: string 
   revalidatePath('/en/supervisor/dashboard')
   return {}
 }
+
+// ── Fetch all supervisors (for swap modal) ────────────────────────────────────
+export async function fetchAllSupervisors(): Promise<SupervisorOption[]> {
+  const supabase = createClient()
+  const { data } = await supabase
+    .from('users')
+    .select('id, full_name, email')
+    .eq('role', 'supervisor')
+    .order('full_name')
+  return (data ?? []) as SupervisorOption[]
+}
+
+// ── Swap supervisor on an existing daily zone ─────────────────────────────────
+export async function swapDailyZoneSupervisor(
+  zoneId:           string,
+  newSupervisorId:  string,
+  oldSupervisorId:  string | null,
+  zoneDate:         string,
+): Promise<{ error?: string }> {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any)
+    .from('daily_zones')
+    .update({ supervisor_id: newSupervisorId })
+    .eq('id', zoneId)
+
+  if (error) return { error: error.message }
+
+  // Resolve names for notifications
+  const userIds = [newSupervisorId, ...(oldSupervisorId ? [oldSupervisorId] : [])].filter(Boolean)
+  const { data: users } = await supabase.from('users').select('id, full_name, email').in('id', userIds)
+  const nameMap = new Map<string, string>()
+  for (const u of (users ?? []) as { id: string; full_name: string | null; email: string }[]) {
+    nameMap.set(u.id, u.full_name || u.email)
+  }
+  const { data: sender } = await supabase.from('users').select('full_name, email').eq('id', user.id).single() as { data: { full_name: string | null; email: string } | null }
+  const senderName = sender?.full_name || sender?.email || 'Manager'
+
+  const dateLabel = new Date(zoneDate + 'T00:00:00').toLocaleDateString('fr-CA', { day: 'numeric', month: 'long' })
+  const notifications: {
+    recipient_id: string; sender_id: string; type: string; title: string; message: string; metadata: Record<string, unknown>; read: boolean
+  }[] = []
+
+  // Notify new supervisor
+  notifications.push({
+    recipient_id: newSupervisorId,
+    sender_id:    user.id,
+    type:         'zone_assigned',
+    title:        `Terrain assigné — ${dateLabel}`,
+    message:      `${senderName} vous a assigné un terrain pour le ${dateLabel}`,
+    metadata:     { zone_id: zoneId, zone_date: zoneDate, sender_name: senderName },
+    read:         false,
+  })
+
+  // Notify old supervisor if there was one
+  if (oldSupervisorId && oldSupervisorId !== newSupervisorId) {
+    notifications.push({
+      recipient_id: oldSupervisorId,
+      sender_id:    user.id,
+      type:         'zone_reassigned',
+      title:        `Terrain réassigné — ${dateLabel}`,
+      message:      `${senderName} a réassigné votre terrain du ${dateLabel} à ${nameMap.get(newSupervisorId) ?? '—'}`,
+      metadata:     { zone_id: zoneId, zone_date: zoneDate, sender_name: senderName },
+      read:         false,
+    })
+  }
+
+  if (notifications.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from('notifications').insert(notifications)
+  }
+
+  revalidatePath('/fr/manager/dashboard')
+  revalidatePath('/en/manager/dashboard')
+  revalidatePath('/fr/admin/manager')
+  revalidatePath('/en/admin/manager')
+  revalidatePath('/fr/supervisor/dashboard')
+  revalidatePath('/en/supervisor/dashboard')
+  return {}
+}

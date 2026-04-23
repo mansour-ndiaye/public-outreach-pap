@@ -175,6 +175,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     supervisor_name: string; team_name: string | null; date: string
     pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
     pfu: number; recalls_count: number; note: string | null; streets_count: number
+    visits?: import('@/components/ui/BarrePopup').VisitEntry[]
     lng: number; lat: number
     entry_id?: string; feature_index?: number
   } | null>(null)
@@ -417,6 +418,25 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
         const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line', 'admin-covered-streets-oob-line'] })
         if (barreFeatures?.length) {
           const p = barreFeatures[0].properties ?? {}
+          // Multi-visit: collect all features at this point sharing the same street_key
+          const streetKey = (p.street_key as string | null) ?? null
+          let visits: import('@/components/ui/BarrePopup').VisitEntry[] | undefined
+          if (streetKey) {
+            const sameStreet = barreFeatures.filter(f => (f.properties?.street_key as string | null) === streetKey)
+            if (sameStreet.length > 1) {
+              const seen = new Set<string>()
+              visits = sameStreet
+                .map(f => ({
+                  date:            (f.properties?.entry_date as string) ?? '',
+                  supervisor_name: (f.properties?.supervisor_name as string) ?? '—',
+                  team_name:       (f.properties?.team_name as string | null) ?? null,
+                  pph:             Number(f.properties?.pph ?? 0),
+                  entry_id:        (f.properties?.entry_id as string) ?? '',
+                }))
+                .filter(v => { if (seen.has(v.entry_id)) return false; seen.add(v.entry_id); return true })
+                .sort((a, b) => b.date.localeCompare(a.date))
+            }
+          }
           setBarreHover({
             supervisor_name:  (p.supervisor_name as string | null) ?? '—',
             team_name:        (p.team_name as string | null) ?? null,
@@ -429,6 +449,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             recalls_count:    Number(p.recalls_count ?? 0),
             note:             (p.note as string | null) ?? null,
             streets_count:    Number(p.streets_count ?? 0),
+            visits,
             lng:              e.lngLat.lng,
             lat:              e.lngLat.lat,
             entry_id:         (p.entry_id as string | null) ?? undefined,
@@ -645,19 +666,39 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             <Layer id="territories-outline" type="line" paint={outlinePaint} />
           </Source>
 
-          {/* Terrain barré — black (in-bounds) + orange (out-of-bounds) */}
+          {/* Terrain barré — opacity encodes recency: rank 0=100%, rank 1=60%, rank 2+=35% */}
           <Source id="admin-covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
             <Layer
               id="admin-covered-streets-line"
               type="line"
               filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
-              paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }}
+              paint={{
+                'line-color': ['case',
+                  ['==', ['get', 'recency_rank'], 0], '#000000',
+                  ['==', ['get', 'recency_rank'], 1], '#333333',
+                  '#666666',
+                ],
+                'line-width': 2,
+                'line-opacity': ['case',
+                  ['==', ['get', 'recency_rank'], 0], 1.0,
+                  ['==', ['get', 'recency_rank'], 1], 0.60,
+                  0.35,
+                ],
+              }}
             />
             <Layer
               id="admin-covered-streets-oob-line"
               type="line"
               filter={['==', true, ['get', 'out_of_bounds']]}
-              paint={{ 'line-color': '#f97316', 'line-width': 2.5, 'line-opacity': 0.9 }}
+              paint={{
+                'line-color': '#f97316',
+                'line-width': 2.5,
+                'line-opacity': ['case',
+                  ['==', ['get', 'recency_rank'], 0], 0.9,
+                  ['==', ['get', 'recency_rank'], 1], 0.60,
+                  0.35,
+                ],
+              }}
             />
           </Source>
 

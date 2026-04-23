@@ -163,6 +163,41 @@ export default function SupervisorDashboard({
   const [hiddenSupervisors, setHiddenSupervisors] = useState<Set<string>>(new Set())
   const [barreHover, setBarreHover] = useState<(BarrePopupInfo & { lng: number; lat: number; entry_id?: string; feature_index?: number }) | null>(null)
 
+  // ── Recall pins (extracted from covered streets) ───────────────────────────
+  type RecallMapPin = { lng: number; lat: number; street: string; postal_code: string; numbers: string[]; supervisor_name: string; date: string }
+  const [showRecallPins, setShowRecallPins] = useState(true)
+
+  const recallPins = useMemo((): RecallMapPin[] => {
+    const pins: RecallMapPin[] = []
+    const allStreets = [...(pastStreets?.features ?? []), ...(teamPastStreets?.features ?? [])]
+    for (const feature of allStreets) {
+      if (feature.geometry.type !== 'LineString') continue
+      const p = feature.properties ?? {}
+      const recallsJson = p.recalls as string | undefined
+      if (!recallsJson) continue
+      let recalls: import('@/lib/supabase/eod-actions').RecallEntry[]
+      try { recalls = JSON.parse(recallsJson) } catch { continue }
+      if (!recalls.length) continue
+      const coords = (feature.geometry as GeoJSON.LineString).coordinates
+      const mid = Math.floor(coords.length / 2)
+      const [lng, lat] = coords[mid]
+      for (const r of recalls) {
+        pins.push({
+          lng, lat,
+          street:          r.street,
+          postal_code:     r.postal_code,
+          numbers:         r.numbers,
+          supervisor_name: (p.supervisor_name as string) ?? '',
+          date:            (p.entry_date as string) ?? '',
+        })
+      }
+    }
+    return pins
+  }, [pastStreets, teamPastStreets])
+
+  // ── Detected postal codes from current drawing session ─────────────────────
+  const [coveredPostalCodes, setCoveredPostalCodes] = useState<string[]>([])
+
   // ── Edit mode (delete terrain barré) ──────────────────────────────────────
   const router = useRouter()
   const [editMode,     setEditMode]     = useState(false)
@@ -181,6 +216,14 @@ export default function SupervisorDashboard({
   // ── Fullscreen map ─────────────────────────────────────────────────────────
   const [isMapFullscreen, setIsMapFullscreen] = useState(false)
   const mapContainerRef = useRef<HTMLDivElement>(null)
+
+  // Call map.resize() after fullscreen toggle so Mapbox repaints to fill the new container
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      mapRef.current?.getMap()?.resize()
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [isMapFullscreen])
 
   // Map center — use territory centroid or Montreal
   const mapCenter = useMemo((): [number, number] => {
@@ -394,6 +437,27 @@ export default function SupervisorDashboard({
     })
     if (features.length > 0) {
       const p = features[0].properties ?? {}
+      let parsedRecalls: import('@/lib/supabase/eod-actions').RecallEntry[] | undefined
+      try { if (p.recalls) parsedRecalls = JSON.parse(p.recalls as string) } catch { /* ignore */ }
+      // Build multi-visit list from all features at this point sharing the same street_key
+      const streetKey = (p.street_key as string | null) ?? null
+      let visits: import('@/components/ui/BarrePopup').VisitEntry[] | undefined
+      if (streetKey) {
+        const sameStreet = features.filter(f => (f.properties?.street_key as string | null) === streetKey)
+        if (sameStreet.length > 1) {
+          const seen = new Set<string>()
+          visits = sameStreet
+            .map(f => ({
+              date:            (f.properties?.entry_date as string) ?? '',
+              supervisor_name: (f.properties?.supervisor_name as string) ?? '—',
+              team_name:       (f.properties?.team_name as string | null) ?? null,
+              pph:             Number(f.properties?.pph ?? 0),
+              entry_id:        (f.properties?.entry_id as string) ?? '',
+            }))
+            .filter(v => { if (seen.has(v.entry_id)) return false; seen.add(v.entry_id); return true })
+            .sort((a, b) => b.date.localeCompare(a.date))
+        }
+      }
       setBarreHover({
         supervisor_name:  p.supervisor_name  ?? '',
         team_name:        p.team_name        ?? null,
@@ -404,9 +468,12 @@ export default function SupervisorDashboard({
         pac_total_amount: Number(p.pac_total_amount) || 0,
         pfu:              Number(p.pfu)              || 0,
         recalls_count:    Number(p.recalls_count)    || 0,
+        recalls:          parsedRecalls,
+        postal_code:      (p.postal_code as string | undefined) || undefined,
         note:             p.note ?? null,
         streets_count:    Number(p.streets_count)    || 0,
         out_of_bounds:    p.out_of_bounds === true,
+        visits,
         lng:              e.lngLat.lng,
         lat:              e.lngLat.lat,
         entry_id:         p.entry_id  ?? undefined,
@@ -432,14 +499,29 @@ export default function SupervisorDashboard({
     return () => window.removeEventListener('keydown', handleKey)
   }, [isMapFullscreen])
 
-  const finishStreet = () => {
+  const finishStreet = async () => {
     if (currentLine.length < 2) return
+
+    // Reverse geocode the midpoint for postal code
+    let postalCode: string | undefined
+    try {
+      const mid = Math.floor(currentLine.length / 2)
+      const [lng, lat] = currentLine[mid]
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}&types=postcode&limit=1`
+      const res = await fetch(url)
+      const json = await res.json()
+      postalCode = json.features?.[0]?.text as string | undefined
+    } catch { /* non-critical — skip silently */ }
+
     setCoveredStreets(prev => [...prev, {
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: currentLine },
-      properties: {},
+      properties: { postal_code: postalCode ?? null },
     }])
     setOutOfBoundsFlags(prev => [...prev, currentLineOOB])
+    if (postalCode) {
+      setCoveredPostalCodes(prev => prev.includes(postalCode!) ? prev : [...prev, postalCode!])
+    }
     setCurrentLine([])
     setCurrentLineOOB(false)
   }
@@ -632,6 +714,7 @@ export default function SupervisorDashboard({
         setRecalls([])
         setPfu('')
         setFieldNote('')
+        setCoveredPostalCodes([])
       }
     })
   }
@@ -663,6 +746,7 @@ export default function SupervisorDashboard({
     setFieldNote('')
     setFormError('')
     setSubmitSuccess(false)
+    setCoveredPostalCodes([])
   }
 
   return (
@@ -740,11 +824,12 @@ export default function SupervisorDashboard({
         <div
           ref={mapContainerRef}
           className={cn(
-            'relative overflow-hidden transition-[border-radius] duration-200',
+            'relative overflow-hidden',
             isMapFullscreen
-              ? 'fixed inset-0 z-50 rounded-none bg-black'
+              ? 'fixed top-0 left-0 w-screen rounded-none z-[9999]'
               : 'rounded-2xl border border-slate-200/80 dark:border-white/[0.07] shadow-card h-[260px] sm:h-[380px]',
           )}
+          style={isMapFullscreen ? { height: '100dvh' } : undefined}
         >
           <Map
             ref={mapRef}
@@ -765,14 +850,38 @@ export default function SupervisorDashboard({
               <Layer id="territory-line" type="line" paint={{ 'line-color': '#2E3192', 'line-width': 1.5, 'line-opacity': 0.5 }} />
             </Source>
 
-            {/* Terrain barré — all covered streets in black #000000 */}
+            {/* Terrain barré — opacity encodes recency: rank 0=100%, rank 1=60%, rank 2+=35% */}
             <Source id="past-streets" type="geojson" data={pastStreets}>
-              <Layer id="past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
+              <Layer id="past-streets-line" type="line" paint={{
+                'line-color': ['case',
+                  ['==', ['get', 'recency_rank'], 0], '#000000',
+                  ['==', ['get', 'recency_rank'], 1], '#333333',
+                  '#666666',
+                ],
+                'line-width': 2,
+                'line-opacity': ['case',
+                  ['==', ['get', 'recency_rank'], 0], 1.0,
+                  ['==', ['get', 'recency_rank'], 1], 0.60,
+                  0.35,
+                ],
+              }} />
             </Source>
 
-            {/* Other supervisors' terrain barré — also black */}
+            {/* Other supervisors' terrain barré — same recency opacity */}
             <Source id="team-past-streets" type="geojson" data={filteredTeamPastStreets}>
-              <Layer id="team-past-streets-line" type="line" paint={{ 'line-color': '#000000', 'line-width': 2, 'line-opacity': 0.85 }} />
+              <Layer id="team-past-streets-line" type="line" paint={{
+                'line-color': ['case',
+                  ['==', ['get', 'recency_rank'], 0], '#000000',
+                  ['==', ['get', 'recency_rank'], 1], '#333333',
+                  '#666666',
+                ],
+                'line-width': 2,
+                'line-opacity': ['case',
+                  ['==', ['get', 'recency_rank'], 0], 1.0,
+                  ['==', ['get', 'recency_rank'], 1], 0.60,
+                  0.35,
+                ],
+              }} />
             </Source>
 
             {/* Other supervisors' terrain du jour (red, 60%) */}
@@ -821,6 +930,18 @@ export default function SupervisorDashboard({
                   style={{ backgroundColor: '#ef4444' }}
                 >
                   {lbl.label}
+                </div>
+              </Marker>
+            ))}
+
+            {/* Recall pins */}
+            {showRecallPins && recallPins.map((pin, i) => (
+              <Marker key={`recall-${i}`} longitude={pin.lng} latitude={pin.lat} anchor="center">
+                <div
+                  title={`${pin.street}${pin.postal_code ? ` (${pin.postal_code})` : ''}${pin.numbers.length ? ': ' + pin.numbers.join(', ') : ''}\n${pin.supervisor_name} — ${pin.date}`}
+                  className="w-5 h-5 rounded-full bg-brand-red border-2 border-white shadow-md flex items-center justify-center cursor-pointer"
+                >
+                  <span className="text-white font-bold" style={{ fontSize: 9 }}>!</span>
                 </div>
               </Marker>
             ))}
@@ -1030,6 +1151,36 @@ export default function SupervisorDashboard({
                 <span className="font-body text-xs text-slate-500 dark:text-white/40">{label}</span>
               </div>
             ))}
+            {/* Recall pins toggle */}
+            {recallPins.length > 0 && (
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showRecallPins}
+                  onChange={e => setShowRecallPins(e.target.checked)}
+                  className="rounded accent-brand-red"
+                />
+                <div className="w-3 h-3 rounded-full bg-brand-red border border-white" />
+                <span className="font-body text-xs text-slate-500 dark:text-white/40">
+                  {locale !== 'en' ? `Rappels (${recallPins.length})` : `Recalls (${recallPins.length})`}
+                </span>
+              </label>
+            )}
+            {/* Recency opacity guide */}
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-0.5">
+                <div className="w-4 h-[3px] rounded-full bg-black" style={{ opacity: 1 }} />
+                <div className="w-4 h-[3px] rounded-full bg-[#333333]" style={{ opacity: 0.6 }} />
+                <div className="w-4 h-[3px] rounded-full bg-[#666666]" style={{ opacity: 0.35 }} />
+              </div>
+              <span className="font-body text-[10px] text-slate-400 dark:text-white/25 italic">
+                {locale !== 'en' ? 'Intensité = récence' : 'Darkness = recency'}
+              </span>
+            </div>
+            {/* 3-month window indicator */}
+            <span className="font-body text-[10px] text-slate-400 dark:text-white/25 italic">
+              {locale !== 'en' ? 'Affichage : 3 derniers mois' : 'Showing: last 3 months'}
+            </span>
           </div>
 
           {/* Team visibility toggle */}
@@ -1189,6 +1340,18 @@ export default function SupervisorDashboard({
                 {coveredStreets.length} {t('history.streets_drawn')}
               </p>
             )}
+            {coveredPostalCodes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-body text-[10px] font-semibold text-slate-400 dark:text-white/30 uppercase tracking-wide">
+                  {locale !== 'en' ? 'Codes postaux détectés :' : 'Detected postal codes:'}
+                </span>
+                {coveredPostalCodes.map(pc => (
+                  <span key={pc} className="px-2 py-0.5 rounded-full bg-brand-teal/10 text-brand-teal font-body text-[11px] font-semibold">
+                    {pc}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -1309,6 +1472,22 @@ export default function SupervisorDashboard({
               </Field>
 
             </div>
+
+            {/* Previous recalls from today's earlier submissions */}
+            {submittedEODs.some(e => e.recalls && e.recalls.length > 0) && (
+              <div className="rounded-xl border border-amber-200/60 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-900/10 px-4 py-3 space-y-1.5">
+                <p className="font-body text-[10px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
+                  {locale !== 'en' ? 'Rappels précédents aujourd\'hui' : 'Previous recalls today'}
+                </p>
+                {submittedEODs.flatMap(e => e.recalls ?? []).slice(0, 5).map((r, i) => (
+                  <div key={i} className="font-body text-xs text-slate-600 dark:text-white/60">
+                    <span className="font-semibold">{r.street}</span>
+                    {r.postal_code ? <span className="text-slate-400"> ({r.postal_code})</span> : null}
+                    {r.numbers.length > 0 ? <span>: {r.numbers.join(', ')}</span> : null}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Recalls list */}
             <RecallsField
@@ -1465,7 +1644,7 @@ export default function SupervisorDashboard({
       {/* ── MOBILE drawing bar: fixed bottom bar when drawing on touch device ── */}
       {isTouch && drawMode === 'drawing' && showNewForm && (
         <div className={cn(
-          'fixed inset-x-0 bottom-0 z-50',
+          'fixed inset-x-0 bottom-0 z-[10000]',
           'flex items-center gap-3 px-4 safe-bottom',
           'h-16 bg-white dark:bg-[#12163a]',
           'border-t border-slate-200/80 dark:border-white/[0.08] shadow-2xl',
