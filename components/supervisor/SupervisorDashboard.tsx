@@ -15,12 +15,15 @@ import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
 import { BarrePopup } from '@/components/ui/BarrePopup'
 import type { BarrePopupInfo } from '@/components/ui/BarrePopup'
 import { PPHLeaderboard } from '@/components/ui/PPHLeaderboard'
+import EvalQuestionnaire from './EvalQuestionnaire'
+import EvalsTab from './EvalsTab'
 
 const EodMiniMap = nextDynamic(() => import('@/components/ui/EodMiniMap'), { ssr: false })
 import { submitEOD, deleteStreetFeature } from '@/lib/supabase/eod-actions'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam } from '@/lib/supabase/zone-actions'
 import type { EODEntry, RecallEntry } from '@/lib/supabase/eod-actions'
+import type { EvalEntry } from '@/lib/supabase/eval-actions'
 
 const TEAM_COLOR_FALLBACK = '#E8174B'
 
@@ -107,13 +110,14 @@ interface SupervisorDashboardProps {
   todayDate:        string
   teamColor?:       string
   locale?:          string
+  myEvals?:         EvalEntry[]
 }
 
 export default function SupervisorDashboard({
   teamId, teamName, supervisorId, supervisorName,
   territory, todayZones, teamZones,
   todayEODs, eodHistory, pastStreets, teamPastStreets,
-  todayDate, teamColor, locale,
+  todayDate, teamColor, locale, myEvals,
 }: SupervisorDashboardProps) {
   const { resolvedTheme } = useTheme()
   const t   = useTranslations('supervisor')
@@ -206,7 +210,11 @@ export default function SupervisorDashboard({
   const [deleteError,  setDeleteError]  = useState('')
 
   // ── Tab navigation ─────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ranking'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ranking' | 'evals'>('dashboard')
+
+  // ── Eval questionnaire (post-EOD) ──────────────────────────────────────────
+  const [showEvalQuestionnaire, setShowEvalQuestionnaire] = useState(false)
+  const [pendingEODId,          setPendingEODId]          = useState<string | null>(null)
 
   // ── History expand ─────────────────────────────────────────────────────────
   const [expandedEOD, setExpandedEOD]  = useState<string | null>(null)
@@ -683,7 +691,8 @@ export default function SupervisorDashboard({
       if (result.error) {
         setFormError(result.error)
       } else {
-        setSubmitSuccess(true)
+        setPendingEODId(result.id ?? null)
+        setShowEvalQuestionnaire(true)
         const newEntry: EODEntry = {
           id: result.id!,
           assignment_id: null,
@@ -757,7 +766,8 @@ export default function SupervisorDashboard({
         {([
           { key: 'dashboard', label: t('tabs.dashboard') },
           { key: 'ranking',   label: t('tabs.ranking') },
-        ] as { key: 'dashboard' | 'ranking'; label: string }[]).map(tab => (
+          { key: 'evals',     label: t('tabs.evals') },
+        ] as { key: 'dashboard' | 'ranking' | 'evals'; label: string }[]).map(tab => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
@@ -771,11 +781,34 @@ export default function SupervisorDashboard({
             {tab.label}
           </button>
         ))}
+        {/* Schedule — external link */}
+        <a
+          href="http://horairepo.afreemart.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            'flex items-center gap-1.5 px-4 min-h-[44px] font-body text-sm font-semibold transition-colors',
+            'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
+            'border-l border-slate-200 dark:border-white/10',
+          )}
+        >
+          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          {t('tabs.schedule')}
+        </a>
       </div>
 
       {/* ── RANKING TAB ─────────────────────────────────────────────────────── */}
       {activeTab === 'ranking' && (
         <PPHLeaderboard supervisorId={supervisorId} locale={locale} />
+      )}
+
+      {/* ── EVALS TAB ───────────────────────────────────────────────────────── */}
+      {activeTab === 'evals' && (
+        <EvalsTab myEvals={myEvals ?? []} />
       )}
 
       {/* ── DASHBOARD TAB ───────────────────────────────────────────────────── */}
@@ -1362,7 +1395,22 @@ export default function SupervisorDashboard({
           {t('eod.title')}
         </h2>
 
-        {submittedEODs.length > 0 && !showNewForm ? (
+        {submittedEODs.length > 0 && !showNewForm && showEvalQuestionnaire ? (
+          /* Post-EOD eval questionnaire */
+          <EvalQuestionnaire
+            eodEntryId={pendingEODId}
+            supervisorId={supervisorId}
+            supervisorName={supervisorName}
+            teamId={teamId}
+            teamName={teamName}
+            evalDate={todayDate}
+            locale={locale}
+            onComplete={() => {
+              setShowEvalQuestionnaire(false)
+              setPendingEODId(null)
+            }}
+          />
+        ) : submittedEODs.length > 0 && !showNewForm ? (
           /* Already submitted today — show last + allow another */
           (() => {
             const last = submittedEODs[submittedEODs.length - 1]

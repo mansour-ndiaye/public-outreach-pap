@@ -61,7 +61,9 @@
       "map": "Map",
       "teams": "Teams",
       "performance": "Performance",
-      "ranking": "Rankings"
+      "ranking": "Rankings",
+      "schedule": "Schedule",
+      "evals": "Evaluations"
     },
     "map": {
       "assign_btn": "Assign turf",
@@ -141,7 +143,9 @@
     },
     "tabs": {
       "dashboard": "Dashboard",
-      "ranking": "Rankings"
+      "ranking": "Rankings",
+      "schedule": "Schedule",
+      "evals": "Evaluations"
     },
     "map": {
       "title": "Daily Turf",
@@ -218,6 +222,8 @@
       "teams": "Teams",
       "manager_dashboard": "Manager Dashboard",
       "ranking": "Rankings",
+      "schedule": "Schedule",
+      "evals": "Evaluations",
       "settings": "Settings",
       "logout": "Log out"
     },
@@ -341,5 +347,63 @@
       "coming_soon": "Under construction",
       "coming_soon_desc": "This section will be available in an upcoming phase."
     }
+  },
+  "evals": {
+    "tab": "Evaluations",
+    "my_evals": "My evaluations",
+    "nav": "Evaluations",
+    "prompt_title": "Did you have an eval today?",
+    "prompt_yes": "Yes",
+    "prompt_no": "No, finish",
+    "form_title": "Evaluation questionnaire",
+    "eval_day": "Eval day",
+    "eval_day_placeholder": "Select a day",
+    "eval_name": "Eval name",
+    "eval_name_placeholder": "Name of recruit being evaluated",
+    "coached_self": "Did you coach yourself?",
+    "coach_name": "Coach name",
+    "coach_name_placeholder": "e.g. Marie Dupont",
+    "eval_pph": "Eval PPH",
+    "eval_canvas_hours": "Eval canvas hours",
+    "eval_pac_total": "Eval PAC $",
+    "notes": "Eval notes",
+    "notes_placeholder": "Observations, strengths, areas to improve...",
+    "submit": "Submit evaluation",
+    "skip": "Skip",
+    "submitting": "Submitting...",
+    "success": "Evaluation submitted!",
+    "auto_pph": "Auto-calculated",
+    "coached_yes": "Yes, me",
+    "coached_no": "No, someone else",
+    "days": {
+      "D1": "D1", "D2": "D2", "D3": "D3", "D4": "D4", "D5": "D5"
+    },
+    "stats_total": "Total evals",
+    "stats_avg_pph": "Avg PPH",
+    "stats_common_day": "Common day",
+    "stats_this_month": "This month",
+    "stats_top_coaches": "Top coaches",
+    "filter_supervisor": "Supervisor",
+    "filter_team": "Team",
+    "filter_day": "Day",
+    "filter_from": "From",
+    "filter_to": "To",
+    "filter_all": "All",
+    "export_csv": "Export CSV",
+    "no_evals": "No evaluations found.",
+    "col_date": "Date",
+    "col_supervisor": "Supervisor",
+    "col_team": "Team",
+    "col_eval_name": "Eval name",
+    "col_eval_day": "Day",
+    "col_pph": "PPH",
+    "col_coached_by": "Coached by",
+    "col_canvas_hours": "Canvas hours",
+    "col_pac_total": "PAC $",
+    "col_notes": "Notes",
+    "coached_self_label": "Supervisor",
+    "breakdown_by_day": "Breakdown by day",
+    "date_label": "Date",
+    "page_title": "Evaluations"
   }
 }

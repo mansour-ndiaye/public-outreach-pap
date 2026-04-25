@@ -10,6 +10,8 @@ import { PPHLeaderboard } from '@/components/ui/PPHLeaderboard'
 import type { TerritoryRow } from '@/types'
 import type { DailyZoneWithTeam, TeamZoneStatus } from '@/lib/supabase/zone-actions'
 import type { EODWithTeam } from '@/lib/supabase/eod-actions'
+import type { EvalEntry } from '@/lib/supabase/eval-actions'
+import EvalsManagerView from './EvalsManagerView'
 
 // Lazy-load map components (no SSR)
 const ManagerMap = nextDynamic(() => import('./ManagerMap'), {
@@ -33,7 +35,7 @@ const TEAM_COLORS = [
 ]
 
 type TeamOption = { id: string; name: string }
-type Tab = 'map' | 'teams' | 'performance' | 'ranking'
+type Tab = 'map' | 'teams' | 'performance' | 'ranking' | 'evals'
 
 interface ManagerDashboardProps {
   territories:       TerritoryRow[]
@@ -45,6 +47,7 @@ interface ManagerDashboardProps {
   todayDate:         string
   locale?:           string
   isAdmin?:          boolean
+  allEvals?:         EvalEntry[]
 }
 
 function formatDate(dateStr: string) {
@@ -74,7 +77,7 @@ function TruncatedNote({ note }: { note: string | null }) {
 }
 
 export default function ManagerDashboard({
-  territories, teams, zones, zoneStatuses, recentEODs, allCoveredStreets, todayDate, locale, isAdmin,
+  territories, teams, zones, zoneStatuses, recentEODs, allCoveredStreets, todayDate, locale, isAdmin, allEvals,
 }: ManagerDashboardProps) {
   const t = useTranslations('manager')
   const [tab, setTab] = useState<Tab>('map')
@@ -213,6 +216,7 @@ export default function ManagerDashboard({
     { key: 'teams',       label: t('tabs.teams') },
     { key: 'performance', label: t('tabs.performance') },
     { key: 'ranking',     label: t('tabs.ranking') },
+    { key: 'evals',       label: t('tabs.evals') },
   ]
 
   return (
@@ -253,6 +257,23 @@ export default function ManagerDashboard({
             {label}
           </button>
         ))}
+        {/* Schedule — external link */}
+        <a
+          href="http://horairepo.afreemart.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            'flex items-center gap-1.5 px-3 sm:px-4 min-h-[44px] rounded-lg font-body text-sm font-semibold transition-all duration-150',
+            'text-slate-500 dark:text-white/50 hover:text-slate-700 dark:hover:text-white/80 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
+          )}
+        >
+          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          {t('tabs.schedule')}
+        </a>
       </div>
 
       {/* Tab content */}
@@ -566,6 +587,13 @@ export default function ManagerDashboard({
         {tab === 'ranking' && (
           <div className="h-full overflow-y-auto p-6 max-w-2xl mx-auto">
             <PPHLeaderboard locale={locale} />
+          </div>
+        )}
+
+        {/* ── EVALS TAB ── */}
+        {tab === 'evals' && (
+          <div className="h-full overflow-y-auto">
+            <EvalsManagerView allEvals={allEvals ?? []} locale={locale} />
           </div>
         )}
 

@@ -9,6 +9,7 @@ import {
   fetchPastCoveredStreets,
   fetchTeamPastCoveredStreets,
 } from '@/lib/supabase/eod-actions'
+import { fetchMyEvals } from '@/lib/supabase/eval-actions'
 import { getCurrentUser } from '@/lib/supabase/actions'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
@@ -83,7 +84,7 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
 
   const [
     territory, todayZones, teamZones, todayEODs,
-    eodHistory, pastStreets, teamPastStreets, supervisorName, allTeams,
+    eodHistory, pastStreets, teamPastStreets, supervisorName, allTeams, myEvals,
   ] = await Promise.all([
     fetchSupervisorTerritory(team.teamId),
     fetchTodayZones(user.id, today),
@@ -94,6 +95,7 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
     fetchTeamPastCoveredStreets(team.teamId, user.id),
     fetchSupervisorName(user.id),
     fetchAllTeams(),
+    fetchMyEvals(user.id),
   ])
 
   // Assign a stable team color based on sorted team list
@@ -117,6 +119,7 @@ export default async function SupervisorDashboardPage({ params: { locale } }: Pr
       todayDate={today}
       teamColor={teamColor}
       locale={locale}
+      myEvals={myEvals}
     />
   )
 }

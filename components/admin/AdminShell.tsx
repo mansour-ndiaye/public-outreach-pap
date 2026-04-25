@@ -83,6 +83,24 @@ function IconTrophy({ className }: { className?: string }) {
   )
 }
 
+function IconCalendar({ className }: { className?: string }) {
+  return (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+      <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
+      <line x1="3" y1="10" x2="21" y2="10"/>
+    </svg>
+  )
+}
+function IconGraduationCap({ className }: { className?: string }) {
+  return (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+      <path d="M6 12v5c0 1.66 2.686 3 6 3s6-1.34 6-3v-5"/>
+    </svg>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 interface AdminShellProps {
   children: React.ReactNode
@@ -100,15 +118,29 @@ export function AdminShell({ children, user, locale }: AdminShellProps) {
 
   const displayName = user.full_name || user.email.split('@')[0]
 
-  const navItems = [
+  const navItemsBefore = [
     { key: 'dashboard',         href: `/${locale}/admin/dashboard`,   Icon: IconDashboard },
     { key: 'users',             href: `/${locale}/admin/users`,        Icon: IconUsers     },
     { key: 'territories',       href: `/${locale}/admin/territories`,  Icon: IconMap       },
     { key: 'teams',             href: `/${locale}/admin/teams`,        Icon: IconTeams     },
     { key: 'manager_dashboard', href: `/${locale}/admin/manager`,      Icon: IconMap       },
-    { key: 'ranking',           href: `/${locale}/admin/ranking`,      Icon: IconTrophy    },
-    { key: 'settings',          href: `/${locale}/admin/settings`,     Icon: IconSettings  },
   ] as const
+
+  const navItemsAfter = [
+    { key: 'ranking',  href: `/${locale}/admin/ranking`,  Icon: IconTrophy         },
+    { key: 'evals',    href: `/${locale}/admin/evals`,    Icon: IconGraduationCap  },
+    { key: 'settings', href: `/${locale}/admin/settings`, Icon: IconSettings       },
+  ] as const
+
+  const navLinkCls = (isActive: boolean) => cn(
+    'flex items-center gap-3 px-3 py-2.5 rounded-xl',
+    'font-body text-sm font-medium',
+    'transition-[background-color,color] duration-150',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-inset',
+    isActive
+      ? 'bg-white/15 text-white'
+      : 'text-white/55 hover:bg-white/8 hover:text-white/90'
+  )
 
   const handleLogout = async () => {
     await signOut(locale)
@@ -128,22 +160,29 @@ export function AdminShell({ children, user, locale }: AdminShellProps) {
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ key, href, Icon }) => {
+        {navItemsBefore.map(({ key, href, Icon }) => {
           const isActive = pathname === href || pathname.startsWith(href + '/')
           return (
-            <Link
-              key={key}
-              href={href}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-xl',
-                'font-body text-sm font-medium',
-                'transition-[background-color,color] duration-150',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-inset',
-                isActive
-                  ? 'bg-white/15 text-white'
-                  : 'text-white/55 hover:bg-white/8 hover:text-white/90'
-              )}
-            >
+            <Link key={key} href={href} className={navLinkCls(isActive)}>
+              <Icon className="w-[18px] h-[18px] shrink-0" />
+              {t(key)}
+            </Link>
+          )
+        })}
+        {/* Horaire — external scheduling tool */}
+        <a
+          href="http://horairepo.afreemart.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={navLinkCls(false)}
+        >
+          <IconCalendar className="w-[18px] h-[18px] shrink-0" />
+          {t('schedule')}
+        </a>
+        {navItemsAfter.map(({ key, href, Icon }) => {
+          const isActive = pathname === href || pathname.startsWith(href + '/')
+          return (
+            <Link key={key} href={href} className={navLinkCls(isActive)}>
               <Icon className="w-[18px] h-[18px] shrink-0" />
               {t(key)}
             </Link>

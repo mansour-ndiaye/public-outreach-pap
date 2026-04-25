@@ -61,7 +61,9 @@
       "map": "Carte",
       "teams": "Équipes",
       "performance": "Performance",
-      "ranking": "Classement"
+      "ranking": "Classement",
+      "schedule": "Horaire",
+      "evals": "Évaluations"
     },
     "map": {
       "assign_btn": "Assigner un terrain",
@@ -141,7 +143,9 @@
     },
     "tabs": {
       "dashboard": "Tableau de bord",
-      "ranking": "Classement"
+      "ranking": "Classement",
+      "schedule": "Horaire",
+      "evals": "Évaluations"
     },
     "map": {
       "title": "Terrain du jour",
@@ -218,6 +222,8 @@
       "teams": "Équipes",
       "manager_dashboard": "Tableau gestionnaire",
       "ranking": "Classement",
+      "schedule": "Horaire",
+      "evals": "Évaluations",
       "settings": "Paramètres",
       "logout": "Déconnexion"
     },
@@ -341,5 +347,63 @@
       "coming_soon": "En construction",
       "coming_soon_desc": "Cette section sera disponible prochainement."
     }
+  },
+  "evals": {
+    "tab": "Évaluations",
+    "my_evals": "Mes évaluations",
+    "nav": "Évaluations",
+    "prompt_title": "Avais-tu un eval aujourd'hui?",
+    "prompt_yes": "Oui",
+    "prompt_no": "Non, terminer",
+    "form_title": "Questionnaire d'évaluation",
+    "eval_day": "Jour d'évaluation",
+    "eval_day_placeholder": "Sélectionner un jour",
+    "eval_name": "Nom de l'eval",
+    "eval_name_placeholder": "Nom de la recrue évaluée",
+    "coached_self": "As-tu coaché toi-même?",
+    "coach_name": "Nom du coach",
+    "coach_name_placeholder": "Ex: Marie Dupont",
+    "eval_pph": "PPH de l'eval",
+    "eval_canvas_hours": "Heures terrain de l'eval",
+    "eval_pac_total": "PAC $ de l'eval",
+    "notes": "Notes sur l'eval",
+    "notes_placeholder": "Observations, points forts, points à améliorer...",
+    "submit": "Soumettre l'évaluation",
+    "skip": "Passer",
+    "submitting": "Envoi...",
+    "success": "Évaluation soumise!",
+    "auto_pph": "Calculé automatiquement",
+    "coached_yes": "Oui, moi",
+    "coached_no": "Non, quelqu'un d'autre",
+    "days": {
+      "D1": "J1", "D2": "J2", "D3": "J3", "D4": "J4", "D5": "J5"
+    },
+    "stats_total": "Total évals",
+    "stats_avg_pph": "PPH moyen",
+    "stats_common_day": "Jour fréquent",
+    "stats_this_month": "Ce mois-ci",
+    "stats_top_coaches": "Top coaches",
+    "filter_supervisor": "Superviseur",
+    "filter_team": "Équipe",
+    "filter_day": "Jour",
+    "filter_from": "Du",
+    "filter_to": "Au",
+    "filter_all": "Tous",
+    "export_csv": "Exporter CSV",
+    "no_evals": "Aucune évaluation trouvée.",
+    "col_date": "Date",
+    "col_supervisor": "Superviseur",
+    "col_team": "Équipe",
+    "col_eval_name": "Nom eval",
+    "col_eval_day": "Jour",
+    "col_pph": "PPH",
+    "col_coached_by": "Coaché par",
+    "col_canvas_hours": "Heures terrain",
+    "col_pac_total": "PAC $",
+    "col_notes": "Notes",
+    "coached_self_label": "Superviseur",
+    "breakdown_by_day": "Répartition par jour",
+    "date_label": "Date",
+    "page_title": "Évaluations"
   }
 }

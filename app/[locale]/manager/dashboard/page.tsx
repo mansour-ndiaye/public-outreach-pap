@@ -1,6 +1,7 @@
 import { fetchTerritories } from '@/lib/supabase/territory-actions'
 import { fetchDailyZones, fetchTeamsWithZoneStatus } from '@/lib/supabase/zone-actions'
 import { fetchRecentEODs, fetchAllCoveredStreets } from '@/lib/supabase/eod-actions'
+import { fetchAllEvals } from '@/lib/supabase/eval-actions'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentUser } from '@/lib/supabase/actions'
 import ManagerDashboard from '@/components/manager/ManagerDashboard'
@@ -20,7 +21,7 @@ async function fetchTeams() {
 export default async function ManagerDashboardPage({ params: { locale } }: Props) {
   const today = new Date().toISOString().split('T')[0]
 
-  const [user, territories, teams, zones, zoneStatuses, recentEODs, allCoveredStreets] = await Promise.all([
+  const [user, territories, teams, zones, zoneStatuses, recentEODs, allCoveredStreets, allEvals] = await Promise.all([
     getCurrentUser(),
     fetchTerritories(),
     fetchTeams(),
@@ -28,6 +29,7 @@ export default async function ManagerDashboardPage({ params: { locale } }: Props
     fetchTeamsWithZoneStatus(today),
     fetchRecentEODs(100),
     fetchAllCoveredStreets(),
+    fetchAllEvals(),
   ])
 
   const isAdmin = user?.role === 'admin'
@@ -44,6 +46,7 @@ export default async function ManagerDashboardPage({ params: { locale } }: Props
         todayDate={today}
         locale={locale}
         isAdmin={isAdmin}
+        allEvals={allEvals}
       />
     </div>
   )
