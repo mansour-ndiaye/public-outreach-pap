@@ -3,7 +3,16 @@
     "allow": [
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
-      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k: d[k] for k in ['manager', 'supervisor', 'admin']}, indent=2, ensure_ascii=False\\)\\)\")"
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k: d[k] for k in ['manager', 'supervisor', 'admin']}, indent=2, ensure_ascii=False\\)\\)\")",
+      "Bash(npm list *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.get\\('dependencies',{}\\).keys\\(\\)\\)\\)\")",
+      "Bash(grep -n \"pph\\\\|\\\\$.*PPH\\\\|PPH.*\\\\$\\\\|toFixed.*pph\\\\|pph.*toFixed\" \"/Users/mansour/Desktop/NEW PAP/components/supervisor/SupervisorDashboard.tsx\")",
+      "Bash(grep -n \"pph\\\\|\\\\$.*pph\\\\|pph.*\\\\$\" \"/Users/mansour/Desktop/NEW PAP/components/ui/PPHLeaderboard.tsx\")",
+      "Bash(grep -n '\\\\$.*pph\\\\|pph.*\\\\$\\\\|\\\\$.*PPH\\\\|PPH.*\\\\$\\\\|`\\\\$.*pph\\\\|`\\\\$.*\\\\.pph\\\\|\\\\${.*pph' \"/Users/mansour/Desktop/NEW PAP/components/supervisor/SupervisorDashboard.tsx\")",
+      "Bash(grep -rn '\\\\$.*\\\\.pph\\\\|pph.*toFixed\\\\|\\\\$\\\\${.*pph' \"/Users/mansour/Desktop/NEW PAP/components\" --include=\"*.tsx\")",
+      "Bash(grep -rn '\\\\$.*pph\\\\|\\\\$.*PPH\\\\|`\\\\$.*pph\\\\|\"PPH.*\\\\$\\\\|pph.*\\\\$' \"/Users/mansour/Desktop/NEW PAP/lib\" --include=\"*.ts\")",
+      "Bash(grep -n \"pphStr\\\\|PPH.*\\\\$\\\\|\\\\$.*PPH\\\\|\\\\$.*pph\" \"/Users/mansour/Desktop/NEW PAP/lib/supabase/eod-actions.ts\")",
+      "Bash(grep -n \"PPH\\\\|\\\\$.*pph\\\\|pph.*\\\\$\\\\|pphStr\" \"/Users/mansour/Desktop/NEW PAP/lib/supabase/eod-actions.ts\")"
     ]
   }
 }

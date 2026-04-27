@@ -237,18 +237,19 @@ export default function ManagerDashboard({
         </div>
       )}
 
-      {/* Tab bar */}
+      {/* Tab bar — horizontally scrollable on mobile */}
       <div className={cn(
-        'flex items-center gap-1 px-4 py-2 shrink-0',
+        'flex items-center gap-1 px-2 sm:px-4 py-2 shrink-0 overflow-x-auto',
         'bg-white/80 dark:bg-white/[0.03] backdrop-blur-sm',
         'border-b border-slate-200/80 dark:border-white/[0.07]',
+        '[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]',
       )}>
         {tabs.map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setTab(key)}
             className={cn(
-              'px-3 sm:px-4 min-h-[44px] rounded-lg font-body text-sm font-semibold transition-all duration-150',
+              'shrink-0 px-3 sm:px-4 min-h-[44px] rounded-lg font-body text-xs sm:text-sm font-semibold transition-all duration-150 whitespace-nowrap',
               tab === key
                 ? 'bg-brand-navy text-white shadow-navy-sm'
                 : 'text-slate-500 dark:text-white/50 hover:text-slate-700 dark:hover:text-white/80 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
@@ -257,13 +258,15 @@ export default function ManagerDashboard({
             {label}
           </button>
         ))}
-        {/* Schedule — external link */}
+        {/* Schedule — external link: icon-only on mobile */}
         <a
           href="http://horairepo.afreemart.com/"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label={t('tabs.schedule')}
+          title={t('tabs.schedule')}
           className={cn(
-            'flex items-center gap-1.5 px-3 sm:px-4 min-h-[44px] rounded-lg font-body text-sm font-semibold transition-all duration-150',
+            'shrink-0 flex items-center justify-center gap-1.5 px-3 min-h-[44px] min-w-[44px] rounded-lg font-body text-xs sm:text-sm font-semibold transition-all duration-150 whitespace-nowrap',
             'text-slate-500 dark:text-white/50 hover:text-slate-700 dark:hover:text-white/80 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
           )}
         >
@@ -272,7 +275,7 @@ export default function ManagerDashboard({
             <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
             <line x1="3" y1="10" x2="21" y2="10"/>
           </svg>
-          {t('tabs.schedule')}
+          <span className="hidden sm:inline">{t('tabs.schedule')}</span>
         </a>
       </div>
 

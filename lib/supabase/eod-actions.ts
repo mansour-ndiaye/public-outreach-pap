@@ -574,6 +574,38 @@ export async function fetchPPHLeaderboard(period: 'week' | 'all' = 'week'): Prom
   return results.sort((a, b) => b.avg_pph - a.avg_pph)
 }
 
+// ── Fetch a single EOD by ID (for deep-link detail page) ─────────────────────
+export async function fetchEodById(id: string): Promise<EODWithTeam | null> {
+  const supabase = createClient()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: entry } = await (supabase as any)
+    .from('daily_entries')
+    .select('*')
+    .eq('id', id)
+    .single() as { data: EODEntry | null }
+
+  if (!entry) return null
+
+  let team_name: string | null = null
+  let supervisor_name: string | null = null
+  let supervisor_avatar_url: string | null = null
+
+  if (entry.team_id) {
+    const { data: team } = await supabase.from('teams').select('name').eq('id', entry.team_id).single() as { data: { name: string } | null }
+    team_name = team?.name ?? null
+  }
+  if (entry.supervisor_id) {
+    const { data: user } = await supabase.from('users').select('full_name, email, avatar_url').eq('id', entry.supervisor_id).single() as { data: { full_name: string | null; email: string; avatar_url: string | null } | null }
+    if (user) {
+      supervisor_name       = user.full_name || user.email
+      supervisor_avatar_url = user.avatar_url ?? null
+    }
+  }
+
+  return { ...entry, team_name, supervisor_name, supervisor_avatar_url }
+}
+
 // ── Recent EODs across all teams (for manager performance tab) ────────────────
 export async function fetchRecentEODs(limit = 50): Promise<EODWithTeam[]> {
   const supabase = createClient()

@@ -280,7 +280,7 @@ export function NotificationBell({ userId, locale }: NotificationBellProps) {
 
                           {entryId && (
                             <a
-                              href={`/${locale ?? 'fr'}/manager/dashboard`}
+                              href={`/${locale ?? 'fr'}/eod/${entryId}`}
                               onClick={e => e.stopPropagation()}
                               className="font-body text-[11px] font-semibold text-brand-navy dark:text-brand-teal hover:underline"
                             >

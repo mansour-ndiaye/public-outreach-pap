@@ -8,7 +8,7 @@ import Map, {
 import { useTheme } from 'next-themes'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
-import { createDailyZone, fetchSupervisorsForTeam, updateDailyZone, deleteDailyZone, swapDailyZoneSupervisor, fetchAllSupervisors } from '@/lib/supabase/zone-actions'
+import { createDailyZone, fetchSupervisorsForTeam, updateDailyZone, deleteDailyZone, swapDailyZoneSupervisor, fetchAllSupervisors, fetchPastDailyZonesForTeam } from '@/lib/supabase/zone-actions'
 import { deleteStreetFeature } from '@/lib/supabase/eod-actions'
 import type { RecallEntry } from '@/lib/supabase/eod-actions'
 import { MapStyleSelector, useMapStyle } from '@/components/ui/MapStyleSelector'
@@ -174,6 +174,14 @@ export default function ManagerMap({
   type PeriodFilter = 'quarter' | 'prev_quarter' | 'rolling_3mo' | 'all'
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('quarter')
 
+  // Reassign mode
+  type AssignMode = 'select' | 'new' | 'reassign'
+  const [assignMode, setAssignMode] = useState<AssignMode>('select')
+  const [pastZones, setPastZones] = useState<DailyZoneWithTeam[]>([])
+  const [loadingPastZones, setLoadingPastZones] = useState(false)
+  const [selectedReassignZone, setSelectedReassignZone] = useState<DailyZoneWithTeam | null>(null)
+  const [reassignFilterSup, setReassignFilterSup] = useState('')
+
   // Swap supervisor modal
   const [swapModal, setSwapModal] = useState<{
     zoneId: string; currentSupervisorId: string | null; currentSupervisorName: string | null; zoneDate: string
@@ -241,6 +249,7 @@ export default function ManagerMap({
     pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
     pfu: number; recalls_count: number; recalls?: RecallEntry[]; note: string | null; streets_count: number
     postal_code?: string
+    out_of_bounds?: boolean | 'soft' | 'hard'
     visits?: VisitEntry[]
     lng: number; lat: number
     entry_id?: string; feature_index?: number
@@ -284,6 +293,16 @@ export default function ManagerMap({
       setLoadingSups(false)
     })
   }, [formTeamId])
+
+  // Load past zones for reassign picker
+  useEffect(() => {
+    if (assignMode !== 'reassign' || !formTeamId) { setPastZones([]); return }
+    setLoadingPastZones(true)
+    fetchPastDailyZonesForTeam(formTeamId).then(zones => {
+      setPastZones(zones)
+      setLoadingPastZones(false)
+    })
+  }, [assignMode, formTeamId])
 
   const territoriesGeoJSON = useMemo(() => buildTerritoriesGeoJSON(territories), [territories])
 
@@ -344,6 +363,21 @@ export default function ManagerMap({
     [currentLine, drawnStreets, aiPreview, formTeamId, teamColorMap],
   )
 
+  const filteredPastZones = useMemo((): DailyZoneWithTeam[] => {
+    if (!pastZones.length) return []
+    if (!reassignFilterSup.trim()) return pastZones
+    const q = reassignFilterSup.toLowerCase()
+    return pastZones.filter(z =>
+      (z.supervisor_name?.toLowerCase().includes(q) ?? false) ||
+      z.team_name.toLowerCase().includes(q),
+    )
+  }, [pastZones, reassignFilterSup])
+
+  const reassignPreviewGeoJSON = useMemo((): GeoJSON.FeatureCollection => {
+    if (!selectedReassignZone) return { type: 'FeatureCollection', features: [] }
+    return (selectedReassignZone.streets as GeoJSON.FeatureCollection) ?? { type: 'FeatureCollection', features: [] }
+  }, [selectedReassignZone])
+
   const handleMapClick = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') {
       const { lng, lat } = e.lngLat
@@ -390,7 +424,7 @@ export default function ManagerMap({
 
   const handleMouseMove = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') { setBarreHover(null); return }
-    const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line', 'covered-streets-oob-line'] })
+    const features = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['covered-streets-line'] })
     if (features?.length) {
       const p = features[0].properties ?? {}
       let recalls: RecallEntry[] | undefined
@@ -416,6 +450,9 @@ export default function ManagerMap({
             .sort((a, b) => b.date.localeCompare(a.date))
         }
       }
+      const rawOOB = p.out_of_bounds as string | boolean | null
+      const oobVal: boolean | 'soft' | 'hard' | undefined =
+        rawOOB === 'hard' ? 'hard' : rawOOB === 'soft' ? 'soft' : rawOOB === true ? true : undefined
       setBarreHover({
         supervisor_name:  (p.supervisor_name as string | null) ?? '—',
         team_name:        (p.team_name as string | null) ?? null,
@@ -428,6 +465,7 @@ export default function ManagerMap({
         recalls_count:    Number(p.recalls_count ?? 0),
         recalls,
         postal_code:      postalCode,
+        out_of_bounds:    oobVal,
         note:             (p.note as string | null) ?? null,
         streets_count:    Number(p.streets_count ?? 0),
         visits,
@@ -447,6 +485,7 @@ export default function ManagerMap({
 
   const openPanel = () => {
     setPanelOpen(true)
+    setAssignMode('select')
     setSaveError('')
     setSaveSuccess(false)
     setDrawMode('idle')
@@ -455,6 +494,9 @@ export default function ManagerMap({
     setAiInput('')
     setAiPreview(null)
     setAiError('')
+    setSelectedReassignZone(null)
+    setReassignFilterSup('')
+    setPastZones([])
   }
 
   const closePanel = () => {
@@ -475,6 +517,10 @@ export default function ManagerMap({
     setEditingZoneId(null)
     recognitionRef.current?.stop()
     setIsRecording(false)
+    setAssignMode('select')
+    setPastZones([])
+    setSelectedReassignZone(null)
+    setReassignFilterSup('')
   }
 
   // After saving, reset drawing state so another zone can be drawn
@@ -723,6 +769,39 @@ export default function ManagerMap({
     })
   }
 
+  // ── Reassign an existing zone (create new zone with same streets) ─────────────
+  const saveReassignZone = async () => {
+    if (!selectedReassignZone || !formTeamId) {
+      setSaveError(locale !== 'en' ? 'Sélectionnez un terrain à réassigner' : 'Select a turf to reassign')
+      return
+    }
+    if (formSupervisorIds.length === 0) {
+      setSaveError(locale !== 'en' ? 'Sélectionnez un superviseur' : 'Select a supervisor')
+      return
+    }
+    setSaving(true)
+    setSaveError('')
+    const supId = formSupervisorIds[0]
+    const result = await createDailyZone({
+      team_id:       formTeamId,
+      supervisor_id: supId,
+      date:          formDate,
+      streets:       selectedReassignZone.streets as GeoJSON.FeatureCollection,
+      note:          formNote,
+    })
+    setSaving(false)
+    if (result.error) { setSaveError(result.error); return }
+    setSaveSuccess(true)
+    const supName = supervisors.find(s => s.id === supId)?.full_name ?? supervisors.find(s => s.id === supId)?.email ?? '—'
+    const tmName = teams.find(tm => tm.id === formTeamId)?.name ?? '—'
+    setAssignConfirm({
+      supervisorNames: [supName],
+      teamName:        tmName,
+      date:            formDate,
+      streetCount:     (selectedReassignZone.streets as GeoJSON.FeatureCollection)?.features?.length ?? 0,
+    })
+  }
+
   // ── Labels ────────────────────────────────────────────────────────────────────
   const territoryLabels = useMemo(() => territories
     .filter(t => t.coordinates?.length)
@@ -782,35 +861,23 @@ export default function ManagerMap({
           </Marker>
         ))}
 
-        {/* Terrain barré — opacity encodes recency: rank 0=100%, rank 1=60%, rank 2+=35% */}
+        {/* Terrain barré — OOB overrides recency; opacity encodes recency */}
         <Source id="covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
           <Layer
             id="covered-streets-line"
             type="line"
-            filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
             paint={{
               'line-color': ['case',
+                ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], true]], '#ef4444',
+                ['==', ['get', 'out_of_bounds'], 'soft'], '#f97316',
                 ['==', ['get', 'recency_rank'], 0], '#000000',
                 ['==', ['get', 'recency_rank'], 1], '#333333',
                 '#666666',
               ],
               'line-width': 2,
               'line-opacity': ['case',
+                ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], 'soft'], ['==', ['get', 'out_of_bounds'], true]], 0.9,
                 ['==', ['get', 'recency_rank'], 0], 1.0,
-                ['==', ['get', 'recency_rank'], 1], 0.60,
-                0.35,
-              ],
-            }}
-          />
-          <Layer
-            id="covered-streets-oob-line"
-            type="line"
-            filter={['==', true, ['get', 'out_of_bounds']]}
-            paint={{
-              'line-color': '#f97316',
-              'line-width': 2.5,
-              'line-opacity': ['case',
-                ['==', ['get', 'recency_rank'], 0], 0.9,
                 ['==', ['get', 'recency_rank'], 1], 0.60,
                 0.35,
               ],
@@ -839,6 +906,17 @@ export default function ManagerMap({
               'line-width': 4, 'line-opacity': 0.95,
               'line-dasharray': ['literal', [2, 1]],
             }} />
+          </Source>
+        )}
+
+        {/* Reassign preview — blue #3b82f6 */}
+        {assignMode === 'reassign' && selectedReassignZone && (
+          <Source id="reassign-preview" type="geojson" data={reassignPreviewGeoJSON}>
+            <Layer
+              id="reassign-preview-line"
+              type="line"
+              paint={{ 'line-color': '#3b82f6', 'line-width': 4, 'line-opacity': 0.9, 'line-dasharray': ['literal', [3, 1]] }}
+            />
           </Source>
         )}
 
@@ -1556,9 +1634,21 @@ export default function ManagerMap({
 
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200/60 dark:border-white/[0.07] shrink-0">
-            <h2 className="font-display text-base font-bold text-brand-navy dark:text-white">
-              {t('panel_title')}
-            </h2>
+            <div className="flex items-center gap-2">
+              {assignMode !== 'select' && (
+                <button
+                  onClick={() => { setAssignMode('select'); setSelectedReassignZone(null); setSaveError('') }}
+                  className="p-1 rounded-lg text-slate-400 hover:text-brand-navy dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+              <h2 className="font-display text-base font-bold text-brand-navy dark:text-white">
+                {assignMode === 'reassign' ? (locale !== 'en' ? 'Réassigner' : 'Reassign') : t('panel_title')}
+              </h2>
+            </div>
             <button onClick={closePanel} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1567,108 +1657,170 @@ export default function ManagerMap({
           </div>
 
           {/* Form fields (scrollable) */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {saveSuccess && (
-              <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                {t('zone_saved')}
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+
+            {/* Mode selection */}
+            {assignMode === 'select' && (
+              <div className="space-y-3">
+                <p className="font-body text-sm text-slate-500 dark:text-white/50">
+                  {locale !== 'en' ? 'Que souhaitez-vous faire?' : 'What would you like to do?'}
+                </p>
+                <button onClick={() => setAssignMode('new')} className="w-full flex items-start gap-3 p-4 rounded-2xl text-left border-2 border-transparent bg-slate-50 dark:bg-white/[0.04] active:bg-brand-navy/5 transition-all">
+                  <div className="w-9 h-9 rounded-full bg-brand-navy/10 flex items-center justify-center shrink-0 mt-0.5">
+                    <svg className="w-4 h-4 text-brand-navy dark:text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="font-body text-sm font-semibold text-brand-navy dark:text-white">{locale !== 'en' ? 'Nouveau terrain' : 'New turf'}</p>
+                    <p className="font-body text-xs text-slate-400 dark:text-white/40 mt-0.5">{locale !== 'en' ? 'Tracer de nouvelles rues' : 'Draw new streets'}</p>
+                  </div>
+                </button>
+                <button onClick={() => setAssignMode('reassign')} className="w-full flex items-start gap-3 p-4 rounded-2xl text-left border-2 border-transparent bg-slate-50 dark:bg-white/[0.04] active:bg-brand-teal/5 transition-all">
+                  <div className="w-9 h-9 rounded-full bg-brand-teal/10 flex items-center justify-center shrink-0 mt-0.5">
+                    <svg className="w-4 h-4 text-brand-teal" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="font-body text-sm font-semibold text-brand-navy dark:text-white">{locale !== 'en' ? 'Réassigner un terrain existant' : 'Reassign existing turf'}</p>
+                    <p className="font-body text-xs text-slate-400 dark:text-white/40 mt-0.5">{locale !== 'en' ? 'Choisir parmi l\'historique' : 'Choose from history'}</p>
+                  </div>
+                </button>
               </div>
             )}
-            {saveError && (
-              <div className="rounded-xl px-4 py-3 bg-brand-red/10 border border-brand-red/30 text-brand-red font-body text-sm">
-                {saveError}
-              </div>
-            )}
-            {/* Team */}
-            <div>
-              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-                {t('team')} <span className="text-brand-red">*</span>
-              </label>
-              <select value={formTeamId} onChange={e => setFormTeamId(e.target.value)} className={inputCls}>
-                <option value="">{t('team_placeholder')}</option>
-                {teams.map(team => (
-                  <option key={team.id} value={team.id}>{team.name}</option>
-                ))}
-              </select>
-            </div>
-            {/* Supervisor — multi-select checkboxes */}
-            <div>
-              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-                {locale !== 'en' ? 'Superviseur(s)' : 'Supervisor(s)'} <span className="text-brand-red">*</span>
-              </label>
-              {loadingSups ? (
-                <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">...</p>
-              ) : !formTeamId ? (
-                <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">
-                  {locale !== 'en' ? 'Sélectionnez une équipe d\'abord' : 'Select a team first'}
-                </p>
-              ) : supervisors.length === 0 ? (
-                <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">
-                  {locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}
-                </p>
-              ) : (
-                <div className="space-y-1.5">
-                  {supervisors.map(s => (
-                    <label key={s.id} className="flex items-center gap-2.5 cursor-pointer group">
-                      <input
-                        type="checkbox"
-                        checked={formSupervisorIds.includes(s.id)}
-                        onChange={e => setFormSupervisorIds(prev =>
-                          e.target.checked ? [...prev, s.id] : prev.filter(id => id !== s.id)
-                        )}
-                        className="w-4 h-4 rounded accent-brand-teal"
-                      />
-                      <span className="font-body text-sm text-slate-700 dark:text-white/80 group-hover:text-brand-navy dark:group-hover:text-white transition-colors">
-                        {s.full_name || s.email}
-                      </span>
-                    </label>
-                  ))}
+
+            {/* New turf form */}
+            {assignMode === 'new' && (
+              <div className="space-y-4">
+                {saveSuccess && (
+                  <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    {t('zone_saved')}
+                  </div>
+                )}
+                {saveError && <div className="rounded-xl px-4 py-3 bg-brand-red/10 border border-brand-red/30 text-brand-red font-body text-sm">{saveError}</div>}
+                <div>
+                  <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">{t('team')} <span className="text-brand-red">*</span></label>
+                  <select value={formTeamId} onChange={e => setFormTeamId(e.target.value)} className={inputCls}>
+                    <option value="">{t('team_placeholder')}</option>
+                    {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+                  </select>
                 </div>
-              )}
-            </div>
-            {/* Date */}
-            <div>
-              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-                {t('date')} <span className="text-brand-red">*</span>
-              </label>
-              <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} className={inputCls} />
-            </div>
-            {/* Note */}
-            <div>
-              <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-                {t('note')}
-              </label>
-              <textarea rows={2} value={formNote} onChange={e => setFormNote(e.target.value)} placeholder={t('note_placeholder')} className={cn(inputCls, 'resize-none')} />
-            </div>
+                <div>
+                  <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">{locale !== 'en' ? 'Superviseur(s)' : 'Supervisor(s)'} <span className="text-brand-red">*</span></label>
+                  {loadingSups ? <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">...</p>
+                    : !formTeamId ? <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">{locale !== 'en' ? "Sélectionnez une équipe d'abord" : 'Select a team first'}</p>
+                    : supervisors.length === 0 ? <p className="font-body text-xs text-slate-400 dark:text-white/40 py-2">{locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}</p>
+                    : (
+                      <div className="space-y-1.5">
+                        {supervisors.map(s => (
+                          <label key={s.id} className="flex items-center gap-2.5 cursor-pointer">
+                            <input type="checkbox" checked={formSupervisorIds.includes(s.id)} onChange={e => setFormSupervisorIds(prev => e.target.checked ? [...prev, s.id] : prev.filter(id => id !== s.id))} className="w-4 h-4 rounded accent-brand-teal" />
+                            <span className="font-body text-sm text-slate-700 dark:text-white/80">{s.full_name || s.email}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                </div>
+                <div>
+                  <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">{t('date')} <span className="text-brand-red">*</span></label>
+                  <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">{t('note')}</label>
+                  <textarea rows={2} value={formNote} onChange={e => setFormNote(e.target.value)} placeholder={t('note_placeholder')} className={cn(inputCls, 'resize-none')} />
+                </div>
+              </div>
+            )}
+
+            {/* Reassign form */}
+            {assignMode === 'reassign' && (
+              <div className="space-y-4">
+                {saveError && <div className="rounded-xl px-4 py-3 bg-brand-red/10 border border-brand-red/30 text-brand-red font-body text-sm">{saveError}</div>}
+                <div>
+                  <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">{t('team')} <span className="text-brand-red">*</span></label>
+                  <select value={formTeamId} onChange={e => setFormTeamId(e.target.value)} className={inputCls}>
+                    <option value="">{t('team_placeholder')}</option>
+                    {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">{locale !== 'en' ? 'Assigner à' : 'Assign to'} <span className="text-brand-red">*</span></label>
+                  {!formTeamId ? <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">{locale !== 'en' ? "Sélectionnez une équipe d'abord" : 'Select a team first'}</p>
+                    : supervisors.length === 0 ? <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">{locale !== 'en' ? 'Aucun superviseur' : 'No supervisors'}</p>
+                    : (
+                      <select value={formSupervisorIds[0] ?? ''} onChange={e => setFormSupervisorIds(e.target.value ? [e.target.value] : [])} className={inputCls}>
+                        <option value="">{locale !== 'en' ? 'Sélectionnez…' : 'Select…'}</option>
+                        {supervisors.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
+                      </select>
+                    )}
+                </div>
+                <div>
+                  <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">{t('date')} <span className="text-brand-red">*</span></label>
+                  <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} className={inputCls} />
+                </div>
+                <div className="pt-2 border-t border-slate-200/60 dark:border-white/[0.07]">
+                  <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-3">{locale !== 'en' ? 'Choisir un terrain existant' : 'Choose existing turf'}</p>
+                  <input type="text" value={reassignFilterSup} onChange={e => setReassignFilterSup(e.target.value)} placeholder={locale !== 'en' ? 'Filtrer par superviseur…' : 'Filter by supervisor…'} className={cn(inputCls, 'mb-3 text-xs py-2')} />
+                  {!formTeamId ? (
+                    <p className="font-body text-xs text-slate-400 dark:text-white/40 py-4 text-center">{locale !== 'en' ? "Sélectionnez une équipe pour voir l'historique" : 'Select a team to see history'}</p>
+                  ) : loadingPastZones ? (
+                    <div className="flex justify-center py-6"><div className="w-5 h-5 rounded-full border-2 border-brand-teal border-t-transparent animate-spin" /></div>
+                  ) : filteredPastZones.length === 0 ? (
+                    <p className="font-body text-xs text-slate-400 dark:text-white/40 py-4 text-center">{locale !== 'en' ? 'Aucun terrain trouvé' : 'No turfs found'}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {filteredPastZones.map(z => (
+                        <button key={z.id} onClick={() => setSelectedReassignZone(prev => prev?.id === z.id ? null : z)} className={cn('w-full flex gap-3 p-3 rounded-xl text-left border-2 transition-all', selectedReassignZone?.id === z.id ? 'border-brand-teal bg-brand-teal/5' : 'border-transparent bg-slate-50 dark:bg-white/[0.03]')}>
+                          <div className="w-16 h-12 shrink-0 rounded-lg overflow-hidden bg-slate-200 dark:bg-white/[0.08]"><ZoneMiniPreview zone={z} /></div>
+                          <div className="flex-1 min-w-0 self-center space-y-0.5">
+                            <p className="font-body text-xs font-semibold text-brand-navy dark:text-white truncate">{z.supervisor_name ?? '—'}</p>
+                            <p className="font-body text-[11px] text-slate-400 dark:text-white/40">{new Date(z.date + 'T00:00:00').toLocaleDateString(locale !== 'en' ? 'fr-CA' : 'en-CA', { day: 'numeric', month: 'short' })}</p>
+                            <p className="font-body text-[11px] text-slate-400 dark:text-white/40">{(z.streets as GeoJSON.FeatureCollection)?.features?.length ?? 0} {locale !== 'en' ? 'rue(s)' : 'street(s)'}</p>
+                          </div>
+                          {selectedReassignZone?.id === z.id && <div className="shrink-0 w-5 h-5 rounded-full bg-brand-teal flex items-center justify-center self-center"><svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg></div>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Footer */}
           <div className="px-5 py-4 border-t border-slate-200/60 dark:border-white/[0.07] space-y-2 shrink-0">
-            {saveSuccess ? (
+            {assignMode === 'select' && (
+              <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
+            )}
+            {assignMode === 'new' && (
+              saveSuccess ? (
+                <>
+                  <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    {t('zone_saved')}
+                  </div>
+                  <button onClick={resetForAnotherZone} className={cn(btnPrimary, 'min-h-[48px]')}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+                    {locale !== 'en' ? 'Assigner une autre zone' : 'Assign another zone'}
+                  </button>
+                  <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={startDrawing} className={cn(btnPrimary, 'min-h-[48px]')}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                    {t('start_drawing')}
+                  </button>
+                  <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
+                </>
+              )
+            )}
+            {assignMode === 'reassign' && (
               <>
-                <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                  {t('zone_saved')}
-                </div>
-                <button onClick={resetForAnotherZone} className={cn(btnPrimary, 'min-h-[48px]')}>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                  {locale !== 'en' ? 'Assigner une autre zone' : 'Assign another zone'}
-                </button>
-                <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
-              </>
-            ) : (
-              <>
-                <button onClick={startDrawing} className={cn(btnPrimary, 'min-h-[48px]')}>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                  {t('start_drawing')}
+                <button onClick={saveReassignZone} disabled={saving || !selectedReassignZone || !formTeamId || formSupervisorIds.length === 0} className={cn(btnSave, 'min-h-[48px]')}>
+                  {saving ? <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" /> : (locale !== 'en' ? 'Assigner ce terrain' : 'Assign this turf')}
                 </button>
                 <button onClick={closePanel} className={cn(btnGhost, 'min-h-[44px]')}>{t('cancel')}</button>
               </>
@@ -1690,9 +1842,25 @@ export default function ManagerMap({
 
         {/* Panel header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200/60 dark:border-white/[0.07]">
-          <h2 className="font-display text-base font-bold text-brand-navy dark:text-white">
-            {editingZoneId ? (locale !== 'en' ? 'Modifier le terrain' : 'Edit turf') : t('panel_title')}
-          </h2>
+          <div className="flex items-center gap-2">
+            {!editingZoneId && assignMode !== 'select' && (
+              <button
+                onClick={() => { setAssignMode('select'); setSelectedReassignZone(null); setSaveError('') }}
+                className="p-1 rounded-lg text-slate-400 hover:text-brand-navy dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            )}
+            <h2 className="font-display text-base font-bold text-brand-navy dark:text-white">
+              {editingZoneId
+                ? (locale !== 'en' ? 'Modifier le terrain' : 'Edit turf')
+                : assignMode === 'reassign'
+                  ? (locale !== 'en' ? 'Réassigner un terrain' : 'Reassign turf')
+                  : t('panel_title')}
+            </h2>
+          </div>
           <button onClick={closePanel} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-colors">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1701,249 +1869,349 @@ export default function ManagerMap({
         </div>
 
         {/* Panel content */}
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+        <div className="flex-1 overflow-y-auto px-5 py-5">
 
-          {/* Success */}
-          {saveSuccess && (
-            <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              {t('zone_saved')}
-            </div>
-          )}
-
-          {/* Error */}
-          {saveError && (
-            <div className="rounded-xl px-4 py-3 bg-brand-red/10 border border-brand-red/30 text-brand-red font-body text-sm">
-              {saveError}
-            </div>
-          )}
-
-          {/* Team selector */}
-          <div>
-            <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-              {t('team')} <span className="text-brand-red">*</span>
-            </label>
-            <select
-              value={formTeamId}
-              onChange={e => setFormTeamId(e.target.value)}
-              disabled={drawMode === 'drawing'}
-              className={inputCls}
-            >
-              <option value="">{t('team_placeholder')}</option>
-              {teams.map(team => (
-                <option key={team.id} value={team.id}>{team.name}</option>
-              ))}
-            </select>
-            {formTeamId && (
-              <div className="flex items-center gap-2 mt-2">
-                <div className="w-4 h-4 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: getColor(teamColorMap, formTeamId) }} />
-                <span className="font-body text-xs text-slate-500 dark:text-white/50">
-                  {teams.find(tm => tm.id === formTeamId)?.name}
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Supervisor — multi-select checkboxes */}
-          <div>
-            <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-              {locale !== 'en' ? 'Superviseur(s)' : 'Supervisor(s)'} <span className="text-brand-red">*</span>
-            </label>
-            {loadingSups ? (
-              <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">...</p>
-            ) : !formTeamId ? (
-              <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
-                {locale !== 'en' ? 'Sélectionnez une équipe d\'abord' : 'Select a team first'}
+          {/* ── MODE SELECTION ─────────────────────────────────────────── */}
+          {!editingZoneId && assignMode === 'select' && (
+            <div className="space-y-3 pt-1">
+              <p className="font-body text-sm text-slate-500 dark:text-white/50">
+                {locale !== 'en' ? 'Que souhaitez-vous faire?' : 'What would you like to do?'}
               </p>
-            ) : supervisors.length === 0 ? (
-              <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
-                {locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}
-              </p>
-            ) : (
-              <div className={cn('space-y-1.5 rounded-xl p-3', 'bg-slate-50 border border-slate-200 dark:bg-white/[0.04] dark:border-white/10')}>
-                {supervisors.map(s => (
-                  <label key={s.id} className={cn('flex items-center gap-2.5 cursor-pointer group', drawMode === 'drawing' && 'pointer-events-none opacity-60')}>
-                    <input
-                      type="checkbox"
-                      checked={formSupervisorIds.includes(s.id)}
-                      onChange={e => setFormSupervisorIds(prev =>
-                        e.target.checked ? [...prev, s.id] : prev.filter(id => id !== s.id)
-                      )}
-                      disabled={drawMode === 'drawing'}
-                      className="w-4 h-4 rounded accent-brand-teal"
-                    />
-                    <span className="font-body text-sm text-slate-700 dark:text-white/80 group-hover:text-brand-navy dark:group-hover:text-white transition-colors">
-                      {s.full_name || s.email}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Date */}
-          <div>
-            <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-              {t('date')} <span className="text-brand-red">*</span>
-            </label>
-            <input
-              type="date" value={formDate}
-              onChange={e => setFormDate(e.target.value)}
-              disabled={drawMode === 'drawing'}
-              className={inputCls}
-            />
-          </div>
-
-          {/* Note */}
-          <div>
-            <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
-              {t('note')}
-            </label>
-            <textarea
-              rows={2} value={formNote}
-              onChange={e => setFormNote(e.target.value)}
-              placeholder={t('note_placeholder')}
-              className={cn(inputCls, 'resize-none')}
-            />
-          </div>
-
-          {/* ── Drawing tools (only visible when drawing) ── */}
-          {drawMode === 'drawing' && (
-            <>
-              {/* Hint */}
-              <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/25 font-body text-sm text-brand-teal flex items-start gap-2">
-                <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>
-                  {locale !== 'en'
-                    ? 'Cliquez sur la carte pour tracer les rues de l\'équipe'
-                    : 'Click on the map to draw team streets'}
-                </span>
-              </div>
-
-              {/* AI Street Assistant */}
-              <div className={cn(
-                'rounded-2xl border p-4 space-y-3',
-                'bg-slate-50 border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.07]',
-              )}>
-                <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">
-                  {t('ai_title')}
-                </p>
-
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={aiInput}
-                    onChange={e => setAiInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleAIDraw()}
-                    placeholder={t('ai_placeholder')}
-                    className={cn(inputCls, 'flex-1 text-xs py-2')}
-                  />
-                  {/* Mic button */}
-                  <button
-                    onClick={toggleVoice}
-                    aria-label={t('mic_label')}
-                    className={cn(
-                      'w-9 h-9 rounded-xl flex items-center justify-center shrink-0',
-                      isRecording
-                        ? 'bg-brand-red text-white animate-pulse'
-                        : 'bg-slate-200 text-slate-600 dark:bg-white/10 dark:text-white/60',
-                      'transition-colors duration-150',
-                    )}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
-                    </svg>
-                  </button>
-                </div>
-
-                {aiError && <p className="font-body text-xs text-brand-red">{aiError}</p>}
-
-                {aiPreview ? (
-                  <div className="flex gap-2">
-                    <button onClick={confirmAIStreets} className={cn(btnSave, 'flex-1 py-2 text-xs')}>
-                      {t('ai_confirm')} ({aiPreview.length})
-                    </button>
-                    <button onClick={retryAI} className={cn(btnGhost, 'flex-1 py-2 text-xs')}>
-                      {t('ai_retry')}
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleAIDraw}
-                    disabled={aiPending || !aiInput.trim()}
-                    className={cn(btnGhost, 'w-full py-2 text-xs')}
-                  >
-                    {aiPending ? t('ai_drawing') : t('ai_draw')}
-                  </button>
-                )}
-              </div>
-
-              {/* Streets drawn counter */}
-              {totalDrawn > 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-white/[0.06]">
-                  <svg className="w-4 h-4 text-brand-navy dark:text-brand-teal" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+              <button
+                onClick={() => setAssignMode('new')}
+                className="w-full flex items-start gap-4 p-4 rounded-2xl text-left border-2 border-transparent hover:border-brand-navy/30 bg-slate-50 dark:bg-white/[0.04] hover:bg-brand-navy/5 dark:hover:bg-white/[0.07] transition-all group"
+              >
+                <div className="w-10 h-10 rounded-full bg-brand-navy/10 flex items-center justify-center shrink-0 group-hover:bg-brand-navy/20 transition-colors mt-0.5">
+                  <svg className="w-5 h-5 text-brand-navy dark:text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                   </svg>
-                  <span className="font-body text-sm text-slate-600 dark:text-white/60">
-                    {totalDrawn} rue(s){currentLine.length > 0 ? ' + 1 en cours' : ''}
-                  </span>
+                </div>
+                <div>
+                  <p className="font-body text-sm font-semibold text-brand-navy dark:text-white">
+                    {locale !== 'en' ? 'Nouveau terrain' : 'New turf'}
+                  </p>
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 mt-0.5">
+                    {locale !== 'en' ? 'Tracer de nouvelles rues sur la carte' : 'Draw new streets on the map'}
+                  </p>
+                </div>
+              </button>
+              <button
+                onClick={() => setAssignMode('reassign')}
+                className="w-full flex items-start gap-4 p-4 rounded-2xl text-left border-2 border-transparent hover:border-brand-teal/40 bg-slate-50 dark:bg-white/[0.04] hover:bg-brand-teal/5 dark:hover:bg-brand-teal/10 transition-all group"
+              >
+                <div className="w-10 h-10 rounded-full bg-brand-teal/10 flex items-center justify-center shrink-0 group-hover:bg-brand-teal/20 transition-colors mt-0.5">
+                  <svg className="w-5 h-5 text-brand-teal" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-body text-sm font-semibold text-brand-navy dark:text-white">
+                    {locale !== 'en' ? 'Réassigner un terrain existant' : 'Reassign existing turf'}
+                  </p>
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 mt-0.5">
+                    {locale !== 'en' ? 'Choisir parmi les terrains déjà dessinés' : 'Choose from previously drawn turfs'}
+                  </p>
+                </div>
+              </button>
+            </div>
+          )}
+
+          {/* ── NEW TURF FORM ───────────────────────────────────────────── */}
+          {(editingZoneId || assignMode === 'new') && (
+            <div className="space-y-4">
+              {saveSuccess && (
+                <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  {t('zone_saved')}
                 </div>
               )}
-            </>
+              {saveError && (
+                <div className="rounded-xl px-4 py-3 bg-brand-red/10 border border-brand-red/30 text-brand-red font-body text-sm">
+                  {saveError}
+                </div>
+              )}
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {t('team')} <span className="text-brand-red">*</span>
+                </label>
+                <select value={formTeamId} onChange={e => setFormTeamId(e.target.value)} disabled={drawMode === 'drawing'} className={inputCls}>
+                  <option value="">{t('team_placeholder')}</option>
+                  {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+                </select>
+                {formTeamId && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="w-4 h-4 rounded-full border-2 border-white shadow-sm" style={{ backgroundColor: getColor(teamColorMap, formTeamId) }} />
+                    <span className="font-body text-xs text-slate-500 dark:text-white/50">{teams.find(tm => tm.id === formTeamId)?.name}</span>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {locale !== 'en' ? 'Superviseur(s)' : 'Supervisor(s)'} <span className="text-brand-red">*</span>
+                </label>
+                {loadingSups ? (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">...</p>
+                ) : !formTeamId ? (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
+                    {locale !== 'en' ? "Sélectionnez une équipe d'abord" : 'Select a team first'}
+                  </p>
+                ) : supervisors.length === 0 ? (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
+                    {locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}
+                  </p>
+                ) : (
+                  <div className={cn('space-y-1.5 rounded-xl p-3', 'bg-slate-50 border border-slate-200 dark:bg-white/[0.04] dark:border-white/10')}>
+                    {supervisors.map(s => (
+                      <label key={s.id} className={cn('flex items-center gap-2.5 cursor-pointer group', drawMode === 'drawing' && 'pointer-events-none opacity-60')}>
+                        <input type="checkbox" checked={formSupervisorIds.includes(s.id)} onChange={e => setFormSupervisorIds(prev => e.target.checked ? [...prev, s.id] : prev.filter(id => id !== s.id))} disabled={drawMode === 'drawing'} className="w-4 h-4 rounded accent-brand-teal" />
+                        <span className="font-body text-sm text-slate-700 dark:text-white/80 group-hover:text-brand-navy dark:group-hover:text-white transition-colors">{s.full_name || s.email}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {t('date')} <span className="text-brand-red">*</span>
+                </label>
+                <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} disabled={drawMode === 'drawing'} className={inputCls} />
+              </div>
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {t('note')}
+                </label>
+                <textarea rows={2} value={formNote} onChange={e => setFormNote(e.target.value)} placeholder={t('note_placeholder')} className={cn(inputCls, 'resize-none')} />
+              </div>
+              {drawMode === 'drawing' && (
+                <>
+                  <div className="rounded-xl px-4 py-3 bg-brand-teal/10 border border-brand-teal/25 font-body text-sm text-brand-teal flex items-start gap-2">
+                    <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>{locale !== 'en' ? "Cliquez sur la carte pour tracer les rues de l'équipe" : 'Click on the map to draw team streets'}</span>
+                  </div>
+                  <div className={cn('rounded-2xl border p-4 space-y-3', 'bg-slate-50 border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.07]')}>
+                    <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/40 uppercase tracking-wide">{t('ai_title')}</p>
+                    <div className="flex gap-2">
+                      <input type="text" value={aiInput} onChange={e => setAiInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAIDraw()} placeholder={t('ai_placeholder')} className={cn(inputCls, 'flex-1 text-xs py-2')} />
+                      <button onClick={toggleVoice} aria-label={t('mic_label')} className={cn('w-9 h-9 rounded-xl flex items-center justify-center shrink-0', isRecording ? 'bg-brand-red text-white animate-pulse' : 'bg-slate-200 text-slate-600 dark:bg-white/10 dark:text-white/60', 'transition-colors duration-150')}>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+                        </svg>
+                      </button>
+                    </div>
+                    {aiError && <p className="font-body text-xs text-brand-red">{aiError}</p>}
+                    {aiPreview ? (
+                      <div className="flex gap-2">
+                        <button onClick={confirmAIStreets} className={cn(btnSave, 'flex-1 py-2 text-xs')}>{t('ai_confirm')} ({aiPreview.length})</button>
+                        <button onClick={retryAI} className={cn(btnGhost, 'flex-1 py-2 text-xs')}>{t('ai_retry')}</button>
+                      </div>
+                    ) : (
+                      <button onClick={handleAIDraw} disabled={aiPending || !aiInput.trim()} className={cn(btnGhost, 'w-full py-2 text-xs')}>
+                        {aiPending ? t('ai_drawing') : t('ai_draw')}
+                      </button>
+                    )}
+                  </div>
+                  {totalDrawn > 0 && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-white/[0.06]">
+                      <svg className="w-4 h-4 text-brand-navy dark:text-brand-teal" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                      </svg>
+                      <span className="font-body text-sm text-slate-600 dark:text-white/60">{totalDrawn} rue(s){currentLine.length > 0 ? ' + 1 en cours' : ''}</span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── REASSIGN FORM ───────────────────────────────────────────── */}
+          {!editingZoneId && assignMode === 'reassign' && (
+            <div className="space-y-4">
+              {saveError && (
+                <div className="rounded-xl px-4 py-3 bg-brand-red/10 border border-brand-red/30 text-brand-red font-body text-sm">
+                  {saveError}
+                </div>
+              )}
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {t('team')} <span className="text-brand-red">*</span>
+                </label>
+                <select value={formTeamId} onChange={e => setFormTeamId(e.target.value)} className={inputCls}>
+                  <option value="">{t('team_placeholder')}</option>
+                  {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {locale !== 'en' ? 'Assigner à' : 'Assign to'} <span className="text-brand-red">*</span>
+                </label>
+                {!formTeamId ? (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
+                    {locale !== 'en' ? "Sélectionnez une équipe d'abord" : 'Select a team first'}
+                  </p>
+                ) : supervisors.length === 0 ? (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 py-1">
+                    {locale !== 'en' ? 'Aucun superviseur dans cette équipe' : 'No supervisors in this team'}
+                  </p>
+                ) : (
+                  <select value={formSupervisorIds[0] ?? ''} onChange={e => setFormSupervisorIds(e.target.value ? [e.target.value] : [])} className={inputCls}>
+                    <option value="">{locale !== 'en' ? 'Sélectionnez…' : 'Select…'}</option>
+                    {supervisors.map(s => <option key={s.id} value={s.id}>{s.full_name || s.email}</option>)}
+                  </select>
+                )}
+              </div>
+              <div>
+                <label className="block font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-1.5">
+                  {t('date')} <span className="text-brand-red">*</span>
+                </label>
+                <input type="date" value={formDate} onChange={e => setFormDate(e.target.value)} className={inputCls} />
+              </div>
+
+              {/* History picker */}
+              <div className="pt-2 border-t border-slate-200/60 dark:border-white/[0.07]">
+                <p className="font-body text-xs font-semibold text-slate-500 dark:text-white/50 uppercase tracking-wide mb-3">
+                  {locale !== 'en' ? 'Choisir un terrain existant' : 'Choose existing turf'}
+                </p>
+                <input
+                  type="text"
+                  value={reassignFilterSup}
+                  onChange={e => setReassignFilterSup(e.target.value)}
+                  placeholder={locale !== 'en' ? 'Filtrer par superviseur…' : 'Filter by supervisor…'}
+                  className={cn(inputCls, 'mb-3 text-xs py-2')}
+                />
+                {!formTeamId ? (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 py-4 text-center">
+                    {locale !== 'en' ? "Sélectionnez une équipe pour voir l'historique" : 'Select a team to see history'}
+                  </p>
+                ) : loadingPastZones ? (
+                  <div className="flex justify-center py-6">
+                    <div className="w-5 h-5 rounded-full border-2 border-brand-teal border-t-transparent animate-spin" />
+                  </div>
+                ) : filteredPastZones.length === 0 ? (
+                  <p className="font-body text-xs text-slate-400 dark:text-white/40 py-4 text-center">
+                    {locale !== 'en' ? 'Aucun terrain trouvé' : 'No turfs found'}
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredPastZones.map(z => (
+                      <button
+                        key={z.id}
+                        onClick={() => setSelectedReassignZone(prev => prev?.id === z.id ? null : z)}
+                        className={cn(
+                          'w-full flex gap-3 p-3 rounded-xl text-left border-2 transition-all',
+                          selectedReassignZone?.id === z.id
+                            ? 'border-brand-teal bg-brand-teal/5 dark:bg-brand-teal/10'
+                            : 'border-transparent bg-slate-50 dark:bg-white/[0.03] hover:border-slate-300 dark:hover:border-white/[0.15]',
+                        )}
+                      >
+                        <div className="w-20 h-14 shrink-0 rounded-lg overflow-hidden bg-slate-200 dark:bg-white/[0.08]">
+                          <ZoneMiniPreview zone={z} />
+                        </div>
+                        <div className="flex-1 min-w-0 space-y-0.5 self-center">
+                          <p className="font-body text-xs font-semibold text-brand-navy dark:text-white truncate">
+                            {z.supervisor_name ?? (locale !== 'en' ? 'Aucun superviseur' : 'No supervisor')}
+                          </p>
+                          <p className="font-body text-[11px] text-slate-400 dark:text-white/40">
+                            {new Date(z.date + 'T00:00:00').toLocaleDateString(locale !== 'en' ? 'fr-CA' : 'en-CA', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          </p>
+                          <p className="font-body text-[11px] text-slate-400 dark:text-white/40">
+                            {(z.streets as GeoJSON.FeatureCollection)?.features?.length ?? 0} {locale !== 'en' ? 'rue(s)' : 'street(s)'}
+                          </p>
+                        </div>
+                        {selectedReassignZone?.id === z.id && (
+                          <div className="shrink-0 w-5 h-5 rounded-full bg-brand-teal flex items-center justify-center self-center">
+                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
         {/* Panel footer */}
         <div className="px-5 py-4 border-t border-slate-200/60 dark:border-white/[0.07] space-y-2">
-          {saveSuccess && drawMode === 'idle' ? (
-            <>
-              <div className="rounded-xl px-3 py-2.5 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
-                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                {t('zone_saved')}
-              </div>
-              <button onClick={resetForAnotherZone} className={btnPrimary}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                {locale !== 'en' ? 'Assigner une autre zone' : 'Assign another zone'}
-              </button>
-              <button onClick={closePanel} className={btnGhost}>{t('cancel')}</button>
-            </>
-          ) : drawMode === 'idle' ? (
-            <>
-              <button onClick={startDrawing} className={btnPrimary}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-                {t('start_drawing')}
-              </button>
-              <button onClick={closePanel} className={btnGhost}>{t('cancel')}</button>
-            </>
-          ) : (
-            <>
-              <button onClick={finishStreet} disabled={currentLine.length < 2} className={btnPrimary}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-                {t('finish_street')}
-              </button>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={undoStreet} className={btnGhost}>{t('undo_street')}</button>
-                <button
-                  onClick={saveZone}
-                  disabled={saving || (drawnStreets.length === 0 && currentLine.length < 2 && !aiPreview?.length)}
-                  className={cn(btnSave, 'col-span-1')}
-                >
-                  {saving ? '...' : (editingZoneId ? (locale !== 'en' ? 'Enregistrer' : 'Save') : t('finish'))}
+
+          {/* Mode selection footer */}
+          {!editingZoneId && assignMode === 'select' && (
+            <button onClick={closePanel} className={btnGhost}>{t('cancel')}</button>
+          )}
+
+          {/* New turf footer */}
+          {(editingZoneId || assignMode === 'new') && (
+            saveSuccess && drawMode === 'idle' ? (
+              <>
+                <div className="rounded-xl px-3 py-2.5 bg-brand-teal/10 border border-brand-teal/30 text-brand-teal font-body text-sm font-semibold flex items-center gap-2">
+                  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  {t('zone_saved')}
+                </div>
+                <button onClick={resetForAnotherZone} className={btnPrimary}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  {locale !== 'en' ? 'Assigner une autre zone' : 'Assign another zone'}
                 </button>
-              </div>
+                <button onClick={closePanel} className={btnGhost}>{t('cancel')}</button>
+              </>
+            ) : drawMode === 'idle' ? (
+              <>
+                <button onClick={startDrawing} className={btnPrimary}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                  {t('start_drawing')}
+                </button>
+                <button onClick={closePanel} className={btnGhost}>{t('cancel')}</button>
+              </>
+            ) : (
+              <>
+                <button onClick={finishStreet} disabled={currentLine.length < 2} className={btnPrimary}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  {t('finish_street')}
+                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={undoStreet} className={btnGhost}>{t('undo_street')}</button>
+                  <button onClick={saveZone} disabled={saving || (drawnStreets.length === 0 && currentLine.length < 2 && !aiPreview?.length)} className={cn(btnSave, 'col-span-1')}>
+                    {saving ? '...' : (editingZoneId ? (locale !== 'en' ? 'Enregistrer' : 'Save') : t('finish'))}
+                  </button>
+                </div>
+              </>
+            )
+          )}
+
+          {/* Reassign footer */}
+          {!editingZoneId && assignMode === 'reassign' && (
+            <>
+              <button
+                onClick={saveReassignZone}
+                disabled={saving || !selectedReassignZone || !formTeamId || formSupervisorIds.length === 0}
+                className={btnSave}
+              >
+                {saving ? (
+                  <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    {locale !== 'en' ? 'Assigner ce terrain' : 'Assign this turf'}
+                  </>
+                )}
+              </button>
+              <button onClick={closePanel} className={btnGhost}>{t('cancel')}</button>
             </>
           )}
         </div>
@@ -1951,6 +2219,52 @@ export default function ManagerMap({
       )} {/* end !isTouch desktop panel */}
 
     </div>
+  )
+}
+
+// ── SVG mini-preview for zone history picker ──────────────────────────────────
+function ZoneMiniPreview({ zone }: { zone: DailyZoneWithTeam }) {
+  const fc = zone.streets as GeoJSON.FeatureCollection
+  const features = fc?.features ?? []
+
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity
+  for (const f of features) {
+    if (f.geometry.type !== 'LineString') continue
+    for (const [lng, lat] of (f.geometry as GeoJSON.LineString).coordinates) {
+      if (lng < minLng) minLng = lng
+      if (lat < minLat) minLat = lat
+      if (lng > maxLng) maxLng = lng
+      if (lat > maxLat) maxLat = lat
+    }
+  }
+
+  if (minLng === Infinity) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <span className="text-[9px] text-slate-400">—</span>
+      </div>
+    )
+  }
+
+  const W = 80, H = 56
+  const padLng = Math.max(0.001, (maxLng - minLng) * 0.15)
+  const padLat = Math.max(0.001, (maxLat - minLat) * 0.15)
+  const lngRange = (maxLng - minLng) + 2 * padLng
+  const latRange = (maxLat - minLat) + 2 * padLat
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-full">
+      {features.map((f, i) => {
+        if (f.geometry.type !== 'LineString') return null
+        const coords = (f.geometry as GeoJSON.LineString).coordinates
+        const points = coords.map(([lng, lat]) => {
+          const x = ((lng - minLng + padLng) / lngRange) * W
+          const y = H - ((lat - minLat + padLat) / latRange) * H
+          return `${x.toFixed(1)},${y.toFixed(1)}`
+        }).join(' ')
+        return <polyline key={i} points={points} fill="none" stroke="#2E3192" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      })}
+    </svg>
   )
 }
 

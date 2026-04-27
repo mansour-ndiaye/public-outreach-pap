@@ -25,7 +25,7 @@ export type BarrePopupInfo = {
   postal_code?:     string
   note:             string | null
   streets_count:    number
-  out_of_bounds?:   boolean
+  out_of_bounds?:   boolean | 'soft' | 'hard'
   // Multi-visit history (when same street was covered multiple times)
   visits?:          VisitEntry[]
 }
@@ -120,9 +120,14 @@ export function BarrePopup({ info, onClose, locale }: Props) {
                 {info.team_name}
               </p>
             )}
-            {info.out_of_bounds && (
+            {(info.out_of_bounds === 'hard' || info.out_of_bounds === true) && (
+              <span className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-body text-[10px] font-bold">
+                🚨 {isFr ? 'Hors terrain' : 'Off turf'}
+              </span>
+            )}
+            {info.out_of_bounds === 'soft' && (
               <span className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-body text-[10px] font-bold">
-                ⚠️ Hors terrain
+                ⚠️ {isFr ? 'Légèrement hors terrain' : 'Slightly off turf'}
               </span>
             )}
           </div>

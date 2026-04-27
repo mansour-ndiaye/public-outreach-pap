@@ -189,7 +189,7 @@ export default function NotificationsPageClient({ initialNotifications, userId, 
 
                       {entryId && (
                         <a
-                          href={`/${locale}/manager/dashboard`}
+                          href={`/${locale}/eod/${entryId}`}
                           onClick={e => e.stopPropagation()}
                           className="font-body text-[11px] font-semibold text-brand-navy dark:text-brand-teal hover:underline"
                         >

@@ -175,6 +175,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     supervisor_name: string; team_name: string | null; date: string
     pph: number; canvas_hours: number | null; pac_count: number; pac_total_amount: number
     pfu: number; recalls_count: number; note: string | null; streets_count: number
+    out_of_bounds?: boolean | 'soft' | 'hard'
     visits?: import('@/components/ui/BarrePopup').VisitEntry[]
     lng: number; lat: number
     entry_id?: string; feature_index?: number
@@ -371,7 +372,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
     if (drawMode === 'idle') {
       if (editMode) {
         // In edit mode: click on terrain barré to delete
-        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line', 'admin-covered-streets-oob-line'] })
+        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line'] })
         if (barreFeatures?.length) {
           const p = barreFeatures[0].properties ?? {}
           const entryId      = p.entry_id as string | undefined
@@ -415,7 +416,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
       } else {
         setTooltipInfo(null)
         // Check for covered streets hover
-        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line', 'admin-covered-streets-oob-line'] })
+        const barreFeatures = mapRef.current?.queryRenderedFeatures(e.point, { layers: ['admin-covered-streets-line'] })
         if (barreFeatures?.length) {
           const p = barreFeatures[0].properties ?? {}
           // Multi-visit: collect all features at this point sharing the same street_key
@@ -437,6 +438,9 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
                 .sort((a, b) => b.date.localeCompare(a.date))
             }
           }
+          const rawOOB = p.out_of_bounds as string | boolean | null
+          const oobVal: boolean | 'soft' | 'hard' | undefined =
+            rawOOB === 'hard' ? 'hard' : rawOOB === 'soft' ? 'soft' : rawOOB === true ? true : undefined
           setBarreHover({
             supervisor_name:  (p.supervisor_name as string | null) ?? '—',
             team_name:        (p.team_name as string | null) ?? null,
@@ -447,6 +451,7 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             pac_total_amount: Number(p.pac_total_amount ?? 0),
             pfu:              Number(p.pfu ?? 0),
             recalls_count:    Number(p.recalls_count ?? 0),
+            out_of_bounds:    oobVal,
             note:             (p.note as string | null) ?? null,
             streets_count:    Number(p.streets_count ?? 0),
             visits,
@@ -666,35 +671,23 @@ export function TerritoriesMap({ territories: initialTerritories, teams, allCove
             <Layer id="territories-outline" type="line" paint={outlinePaint} />
           </Source>
 
-          {/* Terrain barré — opacity encodes recency: rank 0=100%, rank 1=60%, rank 2+=35% */}
+          {/* Terrain barré — OOB overrides recency; opacity encodes recency */}
           <Source id="admin-covered-streets" type="geojson" data={coveredStreetsGeoJSON}>
             <Layer
               id="admin-covered-streets-line"
               type="line"
-              filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
               paint={{
                 'line-color': ['case',
+                  ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], true]], '#ef4444',
+                  ['==', ['get', 'out_of_bounds'], 'soft'], '#f97316',
                   ['==', ['get', 'recency_rank'], 0], '#000000',
                   ['==', ['get', 'recency_rank'], 1], '#333333',
                   '#666666',
                 ],
                 'line-width': 2,
                 'line-opacity': ['case',
+                  ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], 'soft'], ['==', ['get', 'out_of_bounds'], true]], 0.9,
                   ['==', ['get', 'recency_rank'], 0], 1.0,
-                  ['==', ['get', 'recency_rank'], 1], 0.60,
-                  0.35,
-                ],
-              }}
-            />
-            <Layer
-              id="admin-covered-streets-oob-line"
-              type="line"
-              filter={['==', true, ['get', 'out_of_bounds']]}
-              paint={{
-                'line-color': '#f97316',
-                'line-width': 2.5,
-                'line-opacity': ['case',
-                  ['==', ['get', 'recency_rank'], 0], 0.9,
                   ['==', ['get', 'recency_rank'], 1], 0.60,
                   0.35,
                 ],

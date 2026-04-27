@@ -85,6 +85,19 @@ export async function fetchMyEvals(supervisorId: string): Promise<EvalEntry[]> {
   return (data ?? []) as EvalEntry[]
 }
 
+// ── Fetch eval linked to a specific EOD entry ─────────────────────────────────
+export async function fetchEvalByEodId(eodEntryId: string): Promise<EvalEntry | null> {
+  const supabase = createClient()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase as any)
+    .from('evals')
+    .select('*')
+    .eq('eod_entry_id', eodEntryId)
+    .limit(1)
+    .maybeSingle() as { data: EvalEntry | null }
+  return data ?? null
+}
+
 // ── Fetch all evals (admin / manager) ─────────────────────────────────────────
 export async function fetchAllEvals(): Promise<EvalEntry[]> {
   const supabase = createClient()
@@ -118,8 +131,7 @@ async function notifyEvalSubmitted(params: {
   const recipientIds = (recipients ?? []).map(r => r.id)
   if (recipientIds.length === 0) return
 
-  const pphStr  = `$${params.evalPph.toFixed(2)}`
-  const message = `${params.supervisorName} a soumis une évaluation — ${params.evalDay} · PPH: ${pphStr}`
+  const message = `${params.supervisorName} a soumis une évaluation — ${params.evalDay} · PPH: ${params.evalPph.toFixed(2)}`
 
   const notifications = recipientIds.map(recipientId => ({
     recipient_id: recipientId,

@@ -245,7 +245,7 @@ export default function EvalsManagerView({ allEvals, locale }: Props) {
                 <div>
                   <span className="text-neutral-400 dark:text-neutral-500 text-xs">PPH </span>
                   <span className="font-semibold text-brand-navy dark:text-white">
-                    {ev.eval_pph > 0 ? `$${ev.eval_pph.toFixed(2)}` : '—'}
+                    {ev.eval_pph > 0 ? ev.eval_pph.toFixed(2) : '—'}
                   </span>
                 </div>
                 {ev.eval_canvas_hours != null && (

@@ -221,6 +221,44 @@ export async function fetchTeamsWithZoneStatus(date: string): Promise<TeamZoneSt
   })
 }
 
+// ── Fetch past daily zones for a team (for reassign picker) ──────────────────
+export async function fetchPastDailyZonesForTeam(
+  teamId: string,
+  limit = 60,
+): Promise<DailyZoneWithTeam[]> {
+  const supabase = createClient()
+
+  const { data: zones, error } = await supabase
+    .from('daily_zones')
+    .select('*')
+    .eq('team_id', teamId)
+    .order('date', { ascending: false })
+    .limit(limit)
+
+  if (error || !zones) return []
+  const raw = zones as DailyZoneRow[]
+
+  // Resolve supervisor names
+  const supIds = Array.from(new Set(raw.map(z => z.supervisor_id).filter(Boolean) as string[]))
+  const supNames = new Map<string, string>()
+  if (supIds.length > 0) {
+    const { data: users } = await supabase.from('users').select('id, full_name, email').in('id', supIds)
+    for (const u of (users ?? []) as { id: string; full_name: string | null; email: string }[]) {
+      supNames.set(u.id, u.full_name || u.email)
+    }
+  }
+
+  // Get team name once
+  const { data: team } = await supabase.from('teams').select('name').eq('id', teamId).single() as { data: { name: string } | null }
+  const teamName = team?.name ?? teamId
+
+  return raw.map(z => ({
+    ...z,
+    team_name:       teamName,
+    supervisor_name: z.supervisor_id ? (supNames.get(z.supervisor_id) ?? null) : null,
+  }))
+}
+
 // ── Create a daily zone (insert, not upsert — multiple zones allowed) ─────────
 export async function createDailyZone(data: {
   team_id:       string

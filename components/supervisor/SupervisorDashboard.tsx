@@ -71,17 +71,40 @@ function formatDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('fr-CA', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-function pointInPolygon(point: [number, number], ring: number[][]): boolean {
-  const [x, y] = point
-  let inside = false
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0], yi = ring[i][1]
-    const xj = ring[j][0], yj = ring[j][1]
-    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-      inside = !inside
+type OOBLevel = 'none' | 'soft' | 'hard'
+
+// Haversine distance between two [lng, lat] points, returns meters
+function haversineDist(a: [number, number], b: [number, number]): number {
+  const R = 6371000
+  const lat1 = a[1] * Math.PI / 180, lat2 = b[1] * Math.PI / 180
+  const dLat = (b[1] - a[1]) * Math.PI / 180, dLng = (b[0] - a[0]) * Math.PI / 180
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
+}
+
+// Distance from point to line segment (geographic), returns meters
+function ptToSegDist(pt: [number, number], a: [number, number], b: [number, number]): number {
+  const dx = b[0] - a[0], dy = b[1] - a[1]
+  const len2 = dx * dx + dy * dy
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((pt[0] - a[0]) * dx + (pt[1] - a[1]) * dy) / len2))
+  return haversineDist(pt, [a[0] + t * dx, a[1] + t * dy] as [number, number])
+}
+
+// Classify OOB level based on distance to nearest assigned terrain line
+function classifyOOB(pt: [number, number], features: GeoJSON.Feature[]): OOBLevel {
+  if (features.length === 0) return 'none'
+  let minDist = Infinity
+  for (const f of features) {
+    if (f.geometry.type !== 'LineString') continue
+    const coords = (f.geometry as GeoJSON.LineString).coordinates
+    for (let i = 0; i < coords.length - 1; i++) {
+      const d = ptToSegDist(pt, coords[i] as [number, number], coords[i + 1] as [number, number])
+      if (d < minDist) minDist = d
     }
   }
-  return inside
+  if (minDist <= 50)  return 'none'
+  if (minDist <= 150) return 'soft'
+  return 'hard'
 }
 
 type SpeechRecognitionType = {
@@ -147,8 +170,8 @@ export default function SupervisorDashboard({
   const recognitionRef = useRef<SpeechRecognitionType | null>(null)
 
   // ── Out-of-bounds state ────────────────────────────────────────────────────
-  const [outOfBoundsFlags, setOutOfBoundsFlags] = useState<boolean[]>([])
-  const [currentLineOOB,   setCurrentLineOOB]   = useState(false)
+  const [outOfBoundsFlags, setOutOfBoundsFlags] = useState<OOBLevel[]>([])
+  const [currentLineOOB,   setCurrentLineOOB]   = useState<OOBLevel>('none')
 
   // ── EOD form state ─────────────────────────────────────────────────────────
   const [submittedEODs, setSubmittedEODs] = useState<EODEntry[]>(todayEODs)
@@ -406,11 +429,10 @@ export default function SupervisorDashboard({
       const { lng, lat } = e.lngLat
       const newPoint: [number, number] = [lng, lat]
       setCurrentLine(prev => [...prev, newPoint])
-      if (!currentLineOOB && territory?.coordinates?.[0]) {
-        if (!pointInPolygon(newPoint, territory.coordinates[0])) {
-          setCurrentLineOOB(true)
-        }
-      }
+      const level = classifyOOB(newPoint, todayZoneGeoJSON.features)
+      setCurrentLineOOB(prev =>
+        prev === 'hard' ? 'hard' : level === 'hard' ? 'hard' : (prev === 'soft' || level === 'soft') ? 'soft' : 'none'
+      )
       return
     }
     if (editMode && drawMode === 'idle') {
@@ -434,7 +456,7 @@ export default function SupervisorDashboard({
         }
       }
     }
-  }, [drawMode, editMode])
+  }, [drawMode, editMode, todayZoneGeoJSON])
 
   const handleBarreMouseMove = useCallback((e: MapMouseEvent) => {
     if (drawMode === 'drawing') return
@@ -531,13 +553,13 @@ export default function SupervisorDashboard({
       setCoveredPostalCodes(prev => prev.includes(postalCode!) ? prev : [...prev, postalCode!])
     }
     setCurrentLine([])
-    setCurrentLineOOB(false)
+    setCurrentLineOOB('none')
   }
 
   const undoStreet = () => {
     if (currentLine.length > 0) {
       setCurrentLine([])
-      setCurrentLineOOB(false)
+      setCurrentLineOOB('none')
     } else {
       setCoveredStreets(prev => prev.slice(0, -1))
       setOutOfBoundsFlags(prev => prev.slice(0, -1))
@@ -716,7 +738,7 @@ export default function SupervisorDashboard({
         setCoveredStreets([])
         setCurrentLine([])
         setOutOfBoundsFlags([])
-        setCurrentLineOOB(false)
+        setCurrentLineOOB('none')
         setCanvasHours('')
         setPacAmount('')
         setPacCount('')
@@ -746,7 +768,7 @@ export default function SupervisorDashboard({
     setCoveredStreets([])
     setCurrentLine([])
     setOutOfBoundsFlags([])
-    setCurrentLineOOB(false)
+    setCurrentLineOOB('none')
     setCanvasHours('')
     setPacAmount('')
     setPacCount('')
@@ -762,7 +784,8 @@ export default function SupervisorDashboard({
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
 
       {/* ── Tab navigation ──────────────────────────────────────────────────── */}
-      <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 self-start w-fit">
+      {/* Tab nav — scrollable on mobile */}
+      <div className="flex rounded-xl overflow-x-auto overflow-y-hidden border border-slate-200 dark:border-white/10 self-start max-w-full [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {([
           { key: 'dashboard', label: t('tabs.dashboard') },
           { key: 'ranking',   label: t('tabs.ranking') },
@@ -772,7 +795,7 @@ export default function SupervisorDashboard({
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={cn(
-              'px-4 min-h-[44px] font-body text-sm font-semibold transition-colors',
+              'shrink-0 px-3 sm:px-4 min-h-[44px] font-body text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap',
               activeTab === tab.key
                 ? 'bg-brand-navy text-white'
                 : 'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
@@ -781,13 +804,15 @@ export default function SupervisorDashboard({
             {tab.label}
           </button>
         ))}
-        {/* Schedule — external link */}
+        {/* Schedule — external link: icon-only on mobile */}
         <a
           href="http://horairepo.afreemart.com/"
           target="_blank"
           rel="noopener noreferrer"
+          aria-label={t('tabs.schedule')}
+          title={t('tabs.schedule')}
           className={cn(
-            'flex items-center gap-1.5 px-4 min-h-[44px] font-body text-sm font-semibold transition-colors',
+            'shrink-0 flex items-center justify-center gap-1.5 px-3 min-h-[44px] min-w-[44px] font-body text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap',
             'text-slate-600 dark:text-white/60 hover:bg-slate-100 dark:hover:bg-white/[0.05]',
             'border-l border-slate-200 dark:border-white/10',
           )}
@@ -797,7 +822,7 @@ export default function SupervisorDashboard({
             <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
             <line x1="3" y1="10" x2="21" y2="10"/>
           </svg>
-          {t('tabs.schedule')}
+          <span className="hidden sm:inline">{t('tabs.schedule')}</span>
         </a>
       </div>
 
@@ -883,16 +908,19 @@ export default function SupervisorDashboard({
               <Layer id="territory-line" type="line" paint={{ 'line-color': '#2E3192', 'line-width': 1.5, 'line-opacity': 0.5 }} />
             </Source>
 
-            {/* Terrain barré — opacity encodes recency: rank 0=100%, rank 1=60%, rank 2+=35% */}
+            {/* Terrain barré — OOB overrides recency color */}
             <Source id="past-streets" type="geojson" data={pastStreets}>
               <Layer id="past-streets-line" type="line" paint={{
                 'line-color': ['case',
+                  ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], true]], '#ef4444',
+                  ['==', ['get', 'out_of_bounds'], 'soft'], '#f97316',
                   ['==', ['get', 'recency_rank'], 0], '#000000',
                   ['==', ['get', 'recency_rank'], 1], '#333333',
                   '#666666',
                 ],
                 'line-width': 2,
                 'line-opacity': ['case',
+                  ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], 'soft'], ['==', ['get', 'out_of_bounds'], true]], 0.9,
                   ['==', ['get', 'recency_rank'], 0], 1.0,
                   ['==', ['get', 'recency_rank'], 1], 0.60,
                   0.35,
@@ -900,16 +928,19 @@ export default function SupervisorDashboard({
               }} />
             </Source>
 
-            {/* Other supervisors' terrain barré — same recency opacity */}
+            {/* Other supervisors' terrain barré — same recency/OOB logic */}
             <Source id="team-past-streets" type="geojson" data={filteredTeamPastStreets}>
               <Layer id="team-past-streets-line" type="line" paint={{
                 'line-color': ['case',
+                  ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], true]], '#ef4444',
+                  ['==', ['get', 'out_of_bounds'], 'soft'], '#f97316',
                   ['==', ['get', 'recency_rank'], 0], '#000000',
                   ['==', ['get', 'recency_rank'], 1], '#333333',
                   '#666666',
                 ],
                 'line-width': 2,
                 'line-opacity': ['case',
+                  ['any', ['==', ['get', 'out_of_bounds'], 'hard'], ['==', ['get', 'out_of_bounds'], 'soft'], ['==', ['get', 'out_of_bounds'], true]], 0.9,
                   ['==', ['get', 'recency_rank'], 0], 1.0,
                   ['==', ['get', 'recency_rank'], 1], 0.60,
                   0.35,
@@ -930,18 +961,18 @@ export default function SupervisorDashboard({
               <Layer id="today-zone-line" type="line" paint={{ 'line-color': '#22c55e', 'line-width': 4, 'line-opacity': 1 }} />
             </Source>
 
-            {/* Drawing in progress — orange for in-bounds, red for out-of-bounds */}
+            {/* Drawing in progress — orange (none/soft), red (hard) */}
             <Source id="covered" type="geojson" data={coveredGeoJSON}>
               <Layer
                 id="covered-line"
                 type="line"
-                filter={['!=', true, ['coalesce', ['get', 'out_of_bounds'], false]]}
+                filter={['!=', 'hard', ['coalesce', ['get', 'out_of_bounds'], 'none']]}
                 paint={{ 'line-color': '#f97316', 'line-width': 4, 'line-opacity': 0.95 }}
               />
               <Layer
                 id="covered-oob-line"
                 type="line"
-                filter={['==', true, ['get', 'out_of_bounds']]}
+                filter={['==', 'hard', ['coalesce', ['get', 'out_of_bounds'], 'none']]}
                 paint={{ 'line-color': '#ef4444', 'line-width': 4, 'line-opacity': 0.95 }}
               />
             </Source>
@@ -1157,17 +1188,32 @@ export default function SupervisorDashboard({
           )}
         </div>
 
-        {/* Out-of-bounds warning banner */}
-        {(outOfBoundsFlags.some(Boolean) || currentLineOOB) && (
-          <div className="flex items-center gap-2 mt-2 px-4 py-2.5 rounded-xl bg-brand-red/10 border border-brand-red/20 text-brand-red font-body text-sm">
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
-            </svg>
-            {locale !== 'en'
-              ? 'Certaines rues sont hors du territoire assigné'
-              : 'Some streets are outside the assigned territory'}
-          </div>
-        )}
+        {/* Out-of-bounds warning banners */}
+        {(() => {
+          const hasHard = outOfBoundsFlags.includes('hard') || currentLineOOB === 'hard'
+          const hasSoft = outOfBoundsFlags.includes('soft') || currentLineOOB === 'soft'
+          if (hasHard) return (
+            <div className="flex items-center gap-2 mt-2 px-4 py-2.5 rounded-xl bg-brand-red/10 border border-brand-red/20 text-brand-red font-body text-sm">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              {locale !== 'en'
+                ? 'Attention : rues très éloignées du terrain assigné'
+                : 'Warning: streets far from assigned turf'}
+            </div>
+          )
+          if (hasSoft) return (
+            <div className="flex items-center gap-2 mt-2 px-4 py-2.5 rounded-xl bg-orange-50 border border-orange-200 dark:bg-orange-900/10 dark:border-orange-800/30 text-orange-600 dark:text-orange-400 font-body text-sm">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              {locale !== 'en'
+                ? 'Certaines rues sont légèrement hors terrain'
+                : 'Some streets are slightly off turf'}
+            </div>
+          )
+          return null
+        })()}
 
         {/* Legend + Team Toggle */}
         <div className="flex items-start justify-between gap-2 mt-3 px-1">
@@ -1178,6 +1224,8 @@ export default function SupervisorDashboard({
               { color: '#ef4444', label: t('map.legend_assigned_others') },
               { color: '#000000', label: t('map.legend_barre') },
               { color: '#f97316', label: locale !== 'en' ? 'Tracé en cours' : 'In progress' },
+              { color: '#f97316', label: locale !== 'en' ? '⚠ Légèrement hors terrain' : '⚠ Slightly off turf' },
+              { color: '#ef4444', label: locale !== 'en' ? '🚨 Hors terrain' : '🚨 Off turf' },
             ].map(({ color, label }) => (
               <div key={label} className="flex items-center gap-1.5">
                 <div className="w-5 h-[3px] rounded-full" style={{ backgroundColor: color }} />
